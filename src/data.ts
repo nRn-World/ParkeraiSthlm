@@ -33,36 +33,43 @@ export type StreetSegment = {
 
 export const STOCKHOLM_CENTER: LatLng = [59.3293, 18.0686];
 
+// Officiella taxabeskrivningar från Stockholms stad (parkering.stockholm)
+// Uppdaterade: Juli 2026
 export const TARIFFS = {
   1: {
     color: "#ef5b4d",
     price: "55 kr/tim",
-    shortHours: "Dygnet runt",
-    hours: "55 kr/tim, dygnet runt, alla dagar inklusive helgdagar.",
+    shortHours: "Dygnet runt, alla dagar",
+    hours: "55 kr/tim, dygnet runt, alla dagar inklusive lördagar, söndagar och helgdagar.",
+    area: "Centrala city: öster om Klara sjö, söder om Kungsgatan, väster om Birger Jarlsgatan/Nybrokajen, norr om Norrström/Stallgatan.",
   },
   2: {
     color: "#d94f9d",
     price: "31 kr/tim",
-    shortHours: "Vard. 07–21 / Lör+helgdag 09–19",
-    hours: "31 kr/tim vardagar 07–21 och lördagar/helgdagar 09–19. Övrig tid: 20 kr/tim (dygnet runt).",
+    shortHours: "Vard 07–21 / Fredag+Lör+Helgdag 09–19",
+    hours: "Vardagar (utom dag före sön/helgdag): 31 kr/tim 07–21, övrig tid 20 kr/tim. Vardag före sön/helgdag och sön/helgdag: 31 kr/tim 09–19, övrig tid 20 kr/tim. Avgift dygnet runt.",
+    area: "Öster om Scheelegatan (Kungsholmen), söder om Tegnérgatan/Karlavägen, väster om Karlaplan/Narvavägen/Strandvägen, samt Blasieholmen, Gamla stan och Norr Mälarstrand till Kungsholms torg.",
   },
   3: {
     color: "#526fe8",
     price: "20 kr/tim",
-    shortHours: "Vardagar 07–19",
-    hours: "20 kr/tim vardagar 07–19. Lördagar 11–17: 15 kr/tim. Övrig tid (inkl. söndag och helgdag): gratis.",
+    shortHours: "Vardagar 07–19 / Lördag 11–17",
+    hours: "Vardagar (utom dag före sön/helgdag): 20 kr/tim 07–19. Vardag före sön/helgdag (t.ex. lördag): 15 kr/tim 11–17. Övrig tid: ingen avgift.",
+    area: "Vasastan, Östermalm, Kungsholmen, Södermalm, Hammarby Sjöstad, Liljeholmen, Gullmarsplan och några gator i Kista.",
   },
   4: {
     color: "#159783",
     price: "10 kr/tim",
-    shortHours: "Vardagar 07–19",
-    hours: "10 kr/tim vardagar 07–19 och lördagar 11–17. Övrig tid (inkl. söndag och helgdag): gratis.",
+    shortHours: "Vardagar 07–19 / Lördag 11–17",
+    hours: "Vardagar (utom dag före sön/helgdag): 10 kr/tim 07–19. Vardag före sön/helgdag (t.ex. lördag): 10 kr/tim 11–17. Övrig tid: ingen avgift.",
+    area: "Ekhagen, Traneberg, Stora Essingen, Midsommarkransen, Årsta, Enskede och Hammarbyhöjden.",
   },
   5: {
     color: "#80a63b",
     price: "5 kr/tim",
     shortHours: "Vardagar 07–19",
-    hours: "5 kr/tim vardagar 07–19. Övrig tid (inkl. lördag, söndag och helgdag): gratis.",
+    hours: "Vardagar (utom dag före sön/helgdag): 5 kr/tim 07–19. Övrig tid (inkl. lördag, söndag och helgdag): ingen avgift.",
+    area: "Riksby, Bromma, Hägersten och Bagarmossen.",
   },
 } as const;
 
@@ -320,42 +327,71 @@ export const LOCAL_PARKING: ParkingPlace[] = [
   },
 ];
 
+// Officiell prisberäkning baserad på Stockholms stads taxakoder (parkering.stockholm)
+// "Vardag före sön/helgdag" = fredag (om lördag är vanlig dag) ELLER lördag (inför söndag)
+// I praktiken: lördag behandlas alltid som "vardag före sön/helgdag" = kortare avgiftstid
 export function getCurrentPrice(tariff: TariffId, date = new Date()) {
-  const day = date.getDay(); // 0=söndag, 1–5=vardag, 6=lördag
+  const day = date.getDay(); // 0=söndag, 1=måndag ... 5=fredag, 6=lördag
   const hour = date.getHours() + date.getMinutes() / 60;
 
-  // Taxa 1: 55 kr/tim dygnet runt, alla dagar
+  // Hjälpvariabler
+  const isRegularWeekday = day >= 1 && day <= 5; // Måndag–Fredag
+  const isSaturdayOrSunday = day === 0 || day === 6; // Lördag = vardag före söndag, söndag = helgdag
+
+  // Taxa 1: 55 kr/tim – dygnet runt, alla dagar (Taxakod 1)
   if (tariff === 1) return { amount: 55, label: "55 kr/tim just nu" };
 
-  // Taxa 2: Vardagar 07–21 = 31 kr, Lördag/helgdag 09–19 = 31 kr, övrig tid = 20 kr
+  // Taxa 2: Taxakod 2 – dygnet runt, avgiften varierar
+  // - Vardagar utom dag före sön/helgdag (Mån–Tor): 31 kr 07–21, övrig tid 20 kr
+  // - Vardag före sön/helgdag (Fredag) & Lördag/Söndag: 31 kr 09–19, övrig tid 20 kr
   if (tariff === 2) {
-    const isWeekday = day >= 1 && day <= 5;
-    const isSaturday = day === 6;
-    const isSunday = day === 0;
-    const peakWeekday = isWeekday && hour >= 7 && hour < 21;
-    const peakSaturday = isSaturday && hour >= 9 && hour < 19;
-    const peakSunday = isSunday && hour >= 9 && hour < 19; // helgdag = söndagsregler
-    const isPeak = peakWeekday || peakSaturday || peakSunday;
-    return { amount: isPeak ? 31 : 20, label: `${isPeak ? 31 : 20} kr/tim just nu` };
-  }
-
-  // Taxa 3: Vardagar 07–19 = 20 kr, Lördagar 11–17 = 15 kr, övrig tid = gratis
-  if (tariff === 3) {
-    if (day >= 1 && day <= 5 && hour >= 7 && hour < 19) return { amount: 20, label: "20 kr/tim just nu" };
-    if (day === 6 && hour >= 11 && hour < 17) return { amount: 15, label: "15 kr/tim just nu" };
-    return { amount: 0, label: "Gratis just nu" };
-  }
-
-  // Taxa 4: Vardagar 07–19 = 10 kr, Lördagar 11–17 = 10 kr, övrig tid = gratis
-  if (tariff === 4) {
-    if ((day >= 1 && day <= 5 && hour >= 7 && hour < 19) || (day === 6 && hour >= 11 && hour < 17)) {
-      return { amount: 10, label: "10 kr/tim just nu" };
+    if (isRegularWeekday) {
+      // Fredag (day=5) = "vardag före söndag" → kortare peaktid
+      if (day === 5) {
+        return hour >= 9 && hour < 19
+          ? { amount: 31, label: "31 kr/tim just nu" }
+          : { amount: 20, label: "20 kr/tim just nu" };
+      }
+      // Måndag–Torsdag: peak 07–21
+      return hour >= 7 && hour < 21
+        ? { amount: 31, label: "31 kr/tim just nu" }
+        : { amount: 20, label: "20 kr/tim just nu" };
     }
+    // Lördag & Söndag: peak 09–19
+    return hour >= 9 && hour < 19
+      ? { amount: 31, label: "31 kr/tim just nu" }
+      : { amount: 20, label: "20 kr/tim just nu" };
+  }
+
+  // Taxa 3: Taxakod 3
+  // - Vardagar (Mån–Tor): 20 kr/tim 07–19
+  // - Vardag före sön/helgdag (Fredag) & Lördag: 15 kr/tim 11–17
+  // - Övrig tid: gratis
+  if (tariff === 3) {
+    if (isRegularWeekday && day !== 5 && hour >= 7 && hour < 19)
+      return { amount: 20, label: "20 kr/tim just nu" };
+    if ((day === 5 || day === 6) && hour >= 11 && hour < 17)
+      return { amount: 15, label: "15 kr/tim just nu" };
     return { amount: 0, label: "Gratis just nu" };
   }
 
-  // Taxa 5: Vardagar 07–19 = 5 kr, övrig tid = gratis
-  if (day >= 1 && day <= 5 && hour >= 7 && hour < 19) return { amount: 5, label: "5 kr/tim just nu" };
+  // Taxa 4: Taxakod 4
+  // - Vardagar (Mån–Tor): 10 kr/tim 07–19
+  // - Vardag före sön/helgdag (Fredag) & Lördag: 10 kr/tim 11–17
+  // - Övrig tid: gratis
+  if (tariff === 4) {
+    if (isRegularWeekday && day !== 5 && hour >= 7 && hour < 19)
+      return { amount: 10, label: "10 kr/tim just nu" };
+    if ((day === 5 || day === 6) && hour >= 11 && hour < 17)
+      return { amount: 10, label: "10 kr/tim just nu" };
+    return { amount: 0, label: "Gratis just nu" };
+  }
+
+  // Taxa 5: Taxakod 5
+  // - Vardagar (Mån–Tor): 5 kr/tim 07–19
+  // - Lördag, söndag och helgdag: gratis (ingen avgift alls)
+  if (isRegularWeekday && day !== 5 && hour >= 7 && hour < 19)
+    return { amount: 5, label: "5 kr/tim just nu" };
   return { amount: 0, label: "Gratis just nu" };
 }
 
