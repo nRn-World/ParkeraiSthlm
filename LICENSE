@@ -1,0 +1,145 @@
+ICKE-KOMMERSIELL LICENS – PARKERA I STOCKHOLM
+==============================================
+Copyright (c) 2026 nRn World
+Alla rättigheter förbehållna.
+
+GitHub: https://github.com/nRn-World/ParkeraiSthlm
+
+──────────────────────────────────────────────
+SVENSKA (Swedish)
+──────────────────────────────────────────────
+
+Detta programvaruprojekt ("Programvaran") tillhandahålls kostnadsfritt
+för personligt bruk och utbildningsändamål av nRn World.
+
+Genom att ladda ner, kopiera, köra eller på annat sätt använda Programvaran
+accepterar du samtliga villkor i denna licens.
+
+§ 1 – TILLÅTEN ANVÄNDNING
+Du har rätt att:
+  a) Ladda ner och köra Programvaran på din egen enhet.
+  b) Studera och läsa källkoden i syfte att lära dig webbutveckling,
+     kartprogrammering (GIS), React, TypeScript eller angränsande tekniker.
+  c) Modifiera och anpassa Programvaran för personligt, icke-kommersiellt bruk.
+  d) Dela källkoden med andra, förutsatt att:
+       i.  Denna licensfil medföljer i sin helhet, oförändrad.
+      ii.  Originalupphovsrätten ("Copyright © 2026 nRn World") framgår tydligt.
+     iii.  En länk till originalförvaret anges:
+           https://github.com/nRn-World/ParkeraiSthlm
+
+§ 2 – KOMMERSIELLT FÖRBUD
+Det är STRIKT FÖRBJUDET att:
+  a) Sälja Programvaran eller modifierade versioner av den mot betalning.
+  b) Hyra ut, licensiera vidare eller distribuera Programvaran i vinstsyfte.
+  c) Integrera Programvaran (eller delar av den) i kommersiella produkter
+     eller tjänster som genererar intäkter.
+  d) Lägga till betalväggar, prenumerationsmodeller, annonser eller
+     in-app-köp i Programvaran eller dess derivat.
+  e) Använda Programvaran som underlag för kommersiella konsulttjänster
+     utan skriftligt tillstånd från nRn World.
+
+§ 3 – UTBILDNINGSUNDANTAG
+Lärare, studenter och utbildningsinstitutioner får använda Programvaran fritt
+som undervisningsmaterial, förutsatt att användningen är icke-kommersiell och
+att ursprunget tydligt anges i kursmaterialet.
+
+§ 4 – KÄLLKODSINTEGRITET
+Om du delar en modifierad version av Programvaran ska:
+  a) Det tydligt framgå att koden är modifierad och inte identisk med originalet.
+  b) Originalets upphovsrättsnotis och länk till originalförvaret bevaras.
+  c) Inga falska påståenden om upphovsrätt eller ursprung göras.
+
+§ 5 – ANSVARSFRISKRIVNING
+Programvaran tillhandahålls "i befintligt skick" (AS IS), utan garantier av
+något slag, vare sig uttryckliga eller underförstådda. Upphovsmännen kan inte
+hållas ansvariga för:
+  - Parkeringsböter eller andra påföljder orsakade av felaktig tolkning av
+    taxedata i appen.
+  - Felaktig prisinformation, ändrade taxetider eller uteblivna uppdateringar.
+  - Skador på fordon, egendom eller person som uppstår till följd av
+    användningen av Programvaran.
+
+Det är alltid förarens eget ansvar att kontrollera vägmärken och lokal
+skyltning på parkeringsplatsen. Appen är ett hjälpmedel, inte ett rättsligt
+bindande dokument.
+
+§ 6 – IMMATERIELLA RÄTTIGHETER
+Alla immateriella rättigheter till Programvaran, inklusive design, logik och
+källkod, tillhör nRn World och licensgivarna. Denna licens ger dig en
+begränsad, icke-exklusiv, icke-överlåtbar rätt att använda Programvaran
+enligt villkoren ovan.
+
+§ 7 – UPPSÄGNING
+Licensen upphör automatiskt om du bryter mot något av ovanstående villkor.
+Vid uppsägning ska du omedelbart upphöra med all användning av Programvaran
+och radera alla kopior i din ägo.
+
+──────────────────────────────────────────────
+ENGLISH (Translation for reference)
+──────────────────────────────────────────────
+
+NON-COMMERCIAL LICENSE – PARKERA I STOCKHOLM
+Copyright (c) 2026 nRn World. All rights reserved.
+
+This software project ("Software") is provided free of charge for personal
+and educational use. By downloading, copying, running, or otherwise using
+the Software, you agree to all terms of this license.
+
+§ 1 – PERMITTED USE
+You are permitted to:
+  a) Download and run the Software on your own device.
+  b) Study and read the source code to learn web development, GIS programming,
+     React, TypeScript, or related technologies.
+  c) Modify and adapt the Software for personal, non-commercial use.
+  d) Share the source code with others, provided that:
+       i.  This license file is included in full and unmodified.
+      ii.  The original copyright notice ("Copyright © 2026 nRn World") is
+           clearly visible.
+     iii.  A link to the original repository is provided:
+           https://github.com/nRn-World/ParkeraiSthlm
+
+§ 2 – COMMERCIAL PROHIBITION
+It is STRICTLY PROHIBITED to:
+  a) Sell the Software or modified versions thereof for payment.
+  b) Rent, sublicense, or distribute the Software for profit.
+  c) Integrate the Software (or parts of it) into commercial products or
+     services that generate revenue.
+  d) Add paywalls, subscription models, advertisements, or in-app purchases
+     to the Software or its derivatives.
+  e) Use the Software as a basis for commercial consulting services without
+     written permission from nRn World.
+
+§ 3 – EDUCATIONAL EXCEPTION
+Teachers, students, and educational institutions may use the Software freely
+as teaching material, provided the use is non-commercial and the origin is
+clearly credited in course materials.
+
+§ 4 – SOURCE CODE INTEGRITY
+If you share a modified version of the Software:
+  a) It must be clearly stated that the code has been modified.
+  b) The original copyright notice and link to the original repository must
+     be preserved.
+  c) No false claims of authorship or origin may be made.
+
+§ 5 – DISCLAIMER OF WARRANTY
+The Software is provided "AS IS", without warranty of any kind, express or
+implied. The authors shall not be liable for:
+  - Parking fines or penalties caused by incorrect interpretation of tariff
+    data in the app.
+  - Inaccurate pricing information, changed tariff times, or missed updates.
+  - Damage to vehicles, property, or persons resulting from use of the Software.
+
+It is always the driver's own responsibility to check road signs and local
+signage at the parking location. The app is a tool, not a legally binding
+document.
+
+§ 6 – INTELLECTUAL PROPERTY
+All intellectual property rights to the Software, including design, logic, and
+source code, belong to nRn World and its licensors. This license grants you a
+limited, non-exclusive, non-transferable right to use the Software under the
+terms above.
+
+§ 7 – TERMINATION
+The license terminates automatically if you breach any of the above terms.
+Upon termination, you must immediately cease all use of the Software and
+delete all copies in your possession.

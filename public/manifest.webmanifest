@@ -1,0 +1,19 @@
+{
+  "name": "Park Stockholm - taxekarta",
+  "short_name": "Park Stockholm",
+  "description": "Hitta taxeområden, gatuparkering, garage och gratis parkering i Stockholm.",
+  "lang": "sv-SE",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#e8efed",
+  "theme_color": "#1266ee",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
