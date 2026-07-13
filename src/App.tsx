@@ -78,8 +78,10 @@ function tariffAt(point: LatLng): TariffId | null {
 }
 
 function parkingIcon(place: ParkingPlace, selected: boolean) {
-  const color = place.free ? "#16a36f" : place.tariff ? TARIFFS[place.tariff].color : (place.disabledSpaces ?? 0) > 0 ? "#2563eb" : "#172536";
-  const letter = (place.disabledSpaces ?? 0) > 0 ? "H" : place.kind === "garage" ? "G" : "P";
+  const isEv = (place.evSpaces ?? 0) > 0;
+  const isDisabled = (place.disabledSpaces ?? 0) > 0;
+  const color = isEv ? "#7c3aed" : isDisabled ? "#2563eb" : place.free ? "#16a36f" : place.tariff ? TARIFFS[place.tariff].color : "#172536";
+  const letter = isEv ? "E" : isDisabled ? "H" : place.kind === "garage" ? "G" : "P";
   return L.divIcon({
     className: "parking-marker-wrap",
     html: `<div class="parking-marker${selected ? " is-selected" : ""}" style="--marker-color:${color}"><span>${letter}</span></div>`,
