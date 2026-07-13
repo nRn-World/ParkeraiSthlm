@@ -17,7 +17,7 @@ export type ParkingPlace = {
   spaces?: number;
   disabledSpaces?: number;
   evSpaces?: number;
-  source: "local" | "osm" | "api";
+  source: "local" | "osm" | "api" | "ocm";
 };
 
 export type TaxArea = {

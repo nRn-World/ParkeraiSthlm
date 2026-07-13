@@ -53,6 +53,7 @@ type SearchLocation = { name: string; lat: number; lng: number; type: string };
 
 const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
 const STHLM_PARK_API = "https://api.stockholmparkering.se:8084/SparkInfartsParkeringService.svc";
+const OCM_API_KEY = "0fce65ba-1f43-4fc5-93b8-800edf0d4506";
 
 function normalize(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
@@ -211,6 +212,44 @@ function parseApiParking(payload: unknown): ParkingPlace[] {
       spaces: totalSpots > 0 ? totalSpots : undefined,
       disabledSpaces: (f.AntalBesokPlatserRorelsehindrad ?? 0) > 0 ? f.AntalBesokPlatserRorelsehindrad : undefined,
       evSpaces: (f.AntalLaddplatserBesokBil ?? 0) > 0 ? f.AntalLaddplatserBesokBil : undefined,
+      source: "api",
+    }];
+  });
+}
+
+type OcmPoi = {
+  ID: number;
+  AddressInfo: {
+    Title?: string;
+    AddressLine1?: string;
+    Town?: string;
+    Latitude: number;
+    Longitude: number;
+    AccessComments?: string;
+  };
+  NumberOfPoints?: number;
+  UsageCost?: string;
+};
+
+function parseOcmParking(payload: unknown): ParkingPlace[] {
+  if (!Array.isArray(payload)) return [];
+  return (payload as OcmPoi[]).flatMap((p): ParkingPlace[] => {
+    const addr = p.AddressInfo;
+    if (!addr || !Number.isFinite(addr.Latitude) || !Number.isFinite(addr.Longitude)) return [];
+    const totalPoints = p.NumberOfPoints ?? 1;
+    return [{
+      id: "ocm-" + p.ID,
+      name: addr.Title || "Laddstation",
+      address: addr.AddressLine1 || addr.Title || "",
+      area: addr.Town || "Stockholm",
+      lat: addr.Latitude,
+      lng: addr.Longitude,
+      kind: "surface",
+      tariff: null,
+      free: true,
+      priceText: p.UsageCost || "Laddstation",
+      note: addr.AccessComments ? "Info: " + addr.AccessComments : "Laddstation från Open Charge Map.",
+      evSpaces: totalPoints,
       source: "api",
     }];
   });
@@ -420,12 +459,45 @@ function App() {
     } catch { /* silent */ }
   }, []);
 
+  const fetchOcmCharging = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const key = "parksthlm-ocm";
+    const cachedRaw = localStorage.getItem(key);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+        if (cached.version === 1 && Array.isArray(cached.places)) {
+          setAllParking((prev) => {
+            const existingIds = new Set(prev.filter((p) => p.source !== "ocm").map((p) => p.id));
+            return [...prev.filter((p) => p.source !== "ocm"), ...cached.places.filter((p) => !existingIds.has(p.id))];
+          });
+          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
+        }
+      } catch { localStorage.removeItem(key); }
+    }
+    try {
+      const url = "https://api.openchargemap.io/v3/poi/?output=json"
+        + "&countrycode=SE&latitude=59.3293&longitude=18.0686&distance=25"
+        + "&maxresults=5000&compact=true&verbose=false"
+        + "&key=" + OCM_API_KEY;
+      const res = await fetch(url);
+      if (!res.ok) return;
+      const places = parseOcmParking(await res.json());
+      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+      setAllParking((prev) => {
+        const existingIds = new Set(prev.filter((p) => p.source !== "ocm").map((p) => p.id));
+        return [...prev.filter((p) => p.source !== "ocm"), ...places.filter((p) => !existingIds.has(p.id))];
+      });
+    } catch { /* silent */ }
+  }, []);
+
   useEffect(() => {
     void fetchOsmParking();
     void fetchApiParking();
     void fetchDisabledParking();
     void fetchEvCharging();
-  }, [fetchOsmParking, fetchApiParking, fetchDisabledParking, fetchEvCharging]);
+    void fetchOcmCharging();
+  }, [fetchOsmParking, fetchApiParking, fetchDisabledParking, fetchEvCharging, fetchOcmCharging]);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -434,6 +506,7 @@ function App() {
       void fetchApiParking();
       void fetchDisabledParking();
       void fetchEvCharging();
+      void fetchOcmCharging();
     };
     const handleOffline = () => setOnline(false);
     window.addEventListener("online", handleOnline);
