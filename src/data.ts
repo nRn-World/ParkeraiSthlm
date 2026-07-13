@@ -16,9 +16,10 @@ export type ParkingPlace = {
   note: string;
   spaces?: number;
   disabledSpaces?: number;
+  mcSpaces?: number;
   evSpaces?: number;
   evConnections?: EvConnection[];
-  source: "local" | "osm" | "api" | "ocm";
+  source: "local" | "osm" | "osm-disabled" | "osm-ev" | "api" | "ocm" | "nobil" | "stockholm-open-data";
 };
 
 export type EvConnection = {
@@ -14366,16 +14367,6 @@ export const LOCAL_PARKING: ParkingPlace[] = [
     id: "bagarmossen", name: "Lågavägen", address: "Lågavägen 22", area: "Bagarmossen",
     lat: 59.2754, lng: 18.1256, kind: "street", tariff: 5, free: false,
     priceText: "5 kr/tim dagtid", note: "Gatuparkering i taxeområde 5. Gratis utanför avgiftstid.", source: "local",
-  },
-  {
-    id: "bromma-free", name: "Abrahamsberg lokalgata", address: "Registervägen", area: "Abrahamsberg",
-    lat: 59.3368, lng: 17.9533, kind: "street", tariff: null, free: true,
-    priceText: "Gratis", note: "Möjlig avgiftsfri gatuparkering. Tidsgräns och lokal skyltning kan gälla.", source: "local",
-  },
-  {
-    id: "tallkrogen-free", name: "Tallkrogen lokalgata", address: "Tallkrogsvägen", area: "Tallkrogen",
-    lat: 59.2711, lng: 18.0868, kind: "street", tariff: null, free: true,
-    priceText: "Gratis", note: "Möjlig avgiftsfri parkering. Kontrollera skyltning och 24-timmarsregeln.", source: "local",
   },
 ];
 
