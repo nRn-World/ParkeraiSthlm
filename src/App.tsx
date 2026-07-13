@@ -236,10 +236,12 @@ function App() {
   }, []);
 
   const fetchOsmParking = useCallback(async (force = false) => {
+    const CACHE_VERSION = 2;
     const cachedRaw = localStorage.getItem("parksthlm-osm");
     if (cachedRaw && !force) {
       try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[] };
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+        if (cached.version !== CACHE_VERSION) throw new Error("cache-version-mismatch");
         if (Array.isArray(cached.places)) setAllParking([...LOCAL_PARKING, ...cached.places]);
         if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
       } catch {
@@ -254,7 +256,7 @@ function App() {
       const response = await fetch(`${OVERPASS_ENDPOINT}?data=${encodeURIComponent(overpassQuery)}`);
       if (!response.ok) throw new Error("Kunde inte hämta parkeringsdata");
       const places = parseOsmParking(await response.json()).slice(0, 280);
-      localStorage.setItem("parksthlm-osm", JSON.stringify({ timestamp: Date.now(), places }));
+      localStorage.setItem("parksthlm-osm", JSON.stringify({ timestamp: Date.now(), version: 2, places }));
       setAllParking([...LOCAL_PARKING, ...places]);
       if (force) showNotice(`${places.length} parkeringsplatser uppdaterades`);
     } catch {
@@ -485,7 +487,7 @@ function App() {
     if (!layer) return;
     layer.clearLayers();
     const markerPlaces = mapZoom < 14
-      ? filteredParking.filter((place) => place.source === "local" || place.kind === "garage").slice(0, 100)
+      ? filteredParking.filter((place) => place.source === "local" || place.kind === "garage" || (place.disabledSpaces ?? 0) > 0).slice(0, 100)
       : filteredParking.slice(0, 220);
     markerPlaces.forEach((place) => {
       L.marker([place.lat, place.lng], {
