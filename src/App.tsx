@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import L, { type LayerGroup, type Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { AnimatePresence, motion } from "framer-motion";
@@ -353,8 +353,31 @@ function parseOcmParking(payload: unknown): ParkingPlace[] {
       note: addr.AccessComments ? "Info: " + addr.AccessComments : "Laddstation från Open Charge Map.",
       evSpaces: totalPoints,
       evConnections: connections.length > 0 ? connections : undefined,
-      source: "api",
+      source: "ocm",
     }];
+  });
+}
+
+function mergeOcmIntoPlaces(setPlaces: Dispatch<SetStateAction<ParkingPlace[]>>, ocmPlaces: ParkingPlace[]) {
+  setPlaces((prev) => {
+    const updated = prev.map((existing) => {
+      if ((existing.evConnections ?? []).length > 0) return existing;
+      if ((existing.evSpaces ?? 0) === 0) return existing;
+      if (existing.source === "ocm") return existing;
+      const nearby = ocmPlaces.find((ocm) => {
+        if (!ocm.evConnections || ocm.evConnections.length === 0) return false;
+        return distanceKm([existing.lat, existing.lng], [ocm.lat, ocm.lng]) < 0.05;
+      });
+      if (!nearby) return existing;
+      return { ...existing, evConnections: nearby.evConnections };
+    });
+    const ocmIds = new Set(ocmPlaces.map((p) => p.id));
+    const existingCoords = new Set(prev.map((p) => `${p.lat.toFixed(4)},${p.lng.toFixed(4)}`));
+    const newOcm = ocmPlaces.filter((p) => {
+      if (ocmIds.has(p.id) && prev.some((x) => x.id === p.id)) return false;
+      return !existingCoords.has(`${p.lat.toFixed(4)},${p.lng.toFixed(4)}`);
+    });
+    return [...updated, ...newOcm];
   });
 }
 
@@ -566,15 +589,16 @@ function App() {
     if (!navigator.onLine) return;
     const key = "parksthlm-ocm";
     const cachedRaw = localStorage.getItem(key);
+    let places: ParkingPlace[] | null = null;
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
         if (cached.version === 1 && Array.isArray(cached.places)) {
-          setAllParking((prev) => {
-            const existingIds = new Set(prev.filter((p) => p.source !== "ocm").map((p) => p.id));
-            return [...prev.filter((p) => p.source !== "ocm"), ...cached.places.filter((p) => !existingIds.has(p.id))];
-          });
-          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
+          places = cached.places;
+          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+            mergeOcmIntoPlaces(setAllParking, places);
+            return;
+          }
         }
       } catch { localStorage.removeItem(key); }
     }
@@ -585,13 +609,10 @@ function App() {
         + "&key=" + OCM_API_KEY;
       const res = await fetch(url);
       if (!res.ok) return;
-      const places = parseOcmParking(await res.json());
+      places = parseOcmParking(await res.json());
       localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
-      setAllParking((prev) => {
-        const existingIds = new Set(prev.filter((p) => p.source !== "ocm").map((p) => p.id));
-        return [...prev.filter((p) => p.source !== "ocm"), ...places.filter((p) => !existingIds.has(p.id))];
-      });
-    } catch { /* silent */ }
+    } catch { return; }
+    if (places) mergeOcmIntoPlaces(setAllParking, places);
   }, []);
 
   useEffect(() => {
