@@ -2,6 +2,8 @@ name: Deploy till GitHub Pages
 
 on:
   push:
+    branches: [master, agent/stockholm-parking-data-pwa]
+  pull_request:
     branches: [master]
   workflow_dispatch:
 
@@ -44,6 +46,7 @@ jobs:
           path: dist
 
   deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
