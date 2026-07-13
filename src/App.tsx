@@ -700,11 +700,17 @@ function App() {
       if (!response.ok) throw new Error("Sökningen misslyckades");
       const result = (await response.json()) as Array<{ display_name: string; lat: string; lon: string; type: string }>;
       const hasHouseNum = /^\s*.+\s+\d+\s*$/.test(value);
-      setSearchLocations(result.map((item) => {
+      const seen = new Set<string>();
+      setSearchLocations(result.flatMap((item) => {
         const raw = item.display_name.replace(/, Sverige$/, "");
         const parts = raw.split(",").map((s) => s.trim());
-        const name = hasHouseNum ? [value, ...parts.slice(1)].join(", ") : raw;
-        return { name, lat: Number(item.lat), lng: Number(item.lon), type: item.type };
+        const street = parts[0];
+        const area = parts.slice(1, 3).join(", ");
+        const name = hasHouseNum ? value + ", " + area : raw;
+        const key = name.toLowerCase();
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [{ name, lat: Number(item.lat), lng: Number(item.lon), type: item.type }];
       }));
       if (result.length === 0 && hasHouseNum) {
         setSearchLocations([{ name: value + ", Stockholm", lat: 59.3293, lng: 18.0686, type: "address" }]);
