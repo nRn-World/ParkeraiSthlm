@@ -172,7 +172,8 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       : parkingTag === "street_side" || parkingTag === "lane"
         ? "street"
         : "surface";
-    const free = tags.fee === "no";
+    const inTariffZone = tariffAt([lat, lng]) !== null;
+    const free = tags.fee === "no" || (tags.fee !== "yes" && !inTariffZone);
     const tariff = free ? null : tariffAt([lat, lng]);
     const name = isDisabledSpace ? "Handikapparkering" : isChargingStation ? (tags.name || tags.operator || "Laddstation") : tags.name || tags.operator || (kind === "garage" ? "Parkeringsgarage" : "Parkering");
     const streetAddress = [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" ");
@@ -198,13 +199,15 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       kind: isChargingStation ? "surface" : kind,
       tariff,
       free,
-      priceText: free ? "Gratis enligt OSM" : tags.charge || (tags.fee === "yes" ? "Avgift" : "Villkor okända"),
+      priceText: free ? "Gratis" : tags.charge || (tags.fee === "yes" ? "Avgift" : "Villkor okända"),
       note: isDisabledSpace
         ? "Handikapparkering. Gällande regler skyltas på plats."
         : isChargingStation
           ? "Laddstation för elbil enligt OpenStreetMap."
           : free
-            ? "Markerad som avgiftsfri i OpenStreetMap. Kontrollera skyltningen på plats."
+            ? tags.fee === "no"
+              ? "Markerad som avgiftsfri i OpenStreetMap. Kontrollera skyltningen på plats."
+              : "Utanför Stockholms taxeområden. Parkering är avgiftsfri om inte annat skyltas."
             : "Parkeringsplats från OpenStreetMap. Aktuella villkor står vid infarten eller på gatuskylten.",
       spaces: Number.isFinite(Number(tags.capacity)) ? Number(tags.capacity) : undefined,
       disabledSpaces: disabledSpacesVal,
@@ -444,7 +447,7 @@ function App() {
   }, []);
 
   const fetchOsmParking = useCallback(async (force = false) => {
-    const CACHE_VERSION = 2;
+    const CACHE_VERSION = 3;
     const cachedRaw = localStorage.getItem("parksthlm-osm");
     if (cachedRaw && !force) {
       try {
@@ -460,11 +463,11 @@ function App() {
 
     setDataLoading(true);
     try {
-      const overpassQuery = `[out:json][timeout:30];(nwr["amenity"="parking"](around:7000,59.3293,18.0686);nwr["amenity"="parking_space"]["disabled"="yes"](around:7000,59.3293,18.0686););out center tags;`;
+      const overpassQuery = `[out:json][timeout:45];area["name"="Stockholm"]["admin_level"="7"]->.s;(nwr["amenity"="parking"](area.s);nwr["amenity"="parking_space"]["disabled"="yes"](area.s););out center tags(600);`;
       const response = await fetch(`${OVERPASS_ENDPOINT}?data=${encodeURIComponent(overpassQuery)}`);
       if (!response.ok) throw new Error("Kunde inte hämta parkeringsdata");
-      const places = parseOsmParking(await response.json()).slice(0, 280);
-      localStorage.setItem("parksthlm-osm", JSON.stringify({ timestamp: Date.now(), version: 2, places }));
+      const places = parseOsmParking(await response.json()).slice(0, 600);
+      localStorage.setItem("parksthlm-osm", JSON.stringify({ timestamp: Date.now(), version: CACHE_VERSION, places }));
       setAllParking((prev) => [...LOCAL_PARKING, ...places, ...prev.filter((p) => p.source === "api")]);
       if (force) showNotice(`${places.length} parkeringsplatser uppdaterades`);
     } catch {
