@@ -794,7 +794,7 @@ function App() {
 
   const matchesCategory = useCallback((place: ParkingPlace) => {
     if (category === "all") return true;
-    if (category === "free") return place.free;
+    if (category === "free") return place.free && (place.evSpaces ?? 0) === 0;
     if (category === "garage") return place.kind === "garage";
     if (category === "street") return place.kind === "street" || place.kind === "surface";
     if (category === "disabled") return (place.disabledSpaces ?? 0) > 0;
