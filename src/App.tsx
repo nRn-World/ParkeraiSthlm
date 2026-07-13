@@ -703,7 +703,7 @@ function App() {
           </button>
           <button className="brand" type="button" onClick={() => mapRef.current?.flyTo(STOCKHOLM_CENTER, 13, { duration: 1 })}>
             <span className="brand-mark"><ParkingCircle size={24} strokeWidth={2.4} /></span>
-            <span><strong>Park Stockholm</strong><small>Taxa, plats, klart.</small></span>
+            <span><strong>ParkeraiSthlm</strong><small>Taxa, plats, klart.</small></span>
           </button>
           <button className={`connection ${online ? "online" : "offline"}`} type="button" onClick={() => !online && showNotice("Offline: lokala taxor, GPS och sparade parkeringar fungerar") }>
             {online ? <Wifi size={14} /> : <WifiOff size={14} />}
