@@ -4,6 +4,7 @@ import "leaflet/dist/leaflet.css";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Accessibility,
+  Bike,
   Building2,
   CarFront,
   ChevronDown,
@@ -48,16 +49,78 @@ import {
   type TariffId,
 } from "./data";
 
-type Category = "all" | "free" | "garage" | "street" | "disabled" | "ev" | TariffId;
-type RouteInfo = { distance: number; minutes: number; fallback: boolean; destination: ParkingPlace };
+type Category = "all" | "free" | "garage" | "street" | "disabled" | "ev" | "mc" | TariffId;
+type NavigationStep = { instruction: string; distance: number; location: LatLng };
+type RouteInfo = {
+  distance: number;
+  minutes: number;
+  fallback: boolean;
+  destination: ParkingPlace;
+  positions: LatLng[];
+  steps: NavigationStep[];
+  currentStep: number;
+  remainingMeters: number;
+  tracking: boolean;
+  arrived: boolean;
+};
 type SearchLocation = { name: string; lat: number; lng: number; type: string };
+type InstallPlatform = "android" | "ios";
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
 
-const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
-const STHLM_PARK_API = "https://api.stockholmparkering.se:8084/SparkInfartsParkeringService.svc";
-const OCM_API_KEY = "0fce65ba-1f43-4fc5-93b8-800edf0d4506";
+const OVERPASS_ENDPOINTS = [
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+  "https://overpass-api.de/api/interpreter",
+];
+const OVERPASS_ENDPOINT = OVERPASS_ENDPOINTS[0];
+const STOCKHOLM_BOUNDS = { south: 59.2, west: 17.75, north: 59.43, east: 18.3 };
+const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-at";
+const PWA_INSTALL_DISMISSAL_MS = 14 * 24 * 60 * 60 * 1000;
+
+function isIosDevice() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
+function isMobileDevice() {
+  return isIosDevice() || /Android/i.test(navigator.userAgent);
+}
+
+function hasRecentPwaInstallDismissal() {
+  const dismissedAt = Number(localStorage.getItem(PWA_INSTALL_DISMISSAL_KEY));
+  return Number.isFinite(dismissedAt) && Date.now() - dismissedAt < PWA_INSTALL_DISMISSAL_MS;
+}
 
 function normalize(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function isTariffId(value: unknown): value is TariffId {
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5;
+}
+
+function placeColor(place: ParkingPlace) {
+  if ((place.evSpaces ?? 0) > 0) return "#7c3aed";
+  if ((place.disabledSpaces ?? 0) > 0) return "#2563eb";
+  if ((place.mcSpaces ?? 0) > 0) return "#d97706";
+  if (place.free) return "#16a36f";
+  return isTariffId(place.tariff) ? TARIFFS[place.tariff].color : "#172536";
+}
+
+function placeTariffLabel(place: ParkingPlace) {
+  if (place.free) return "Avgiftsfri";
+  if (isTariffId(place.tariff)) return `Taxa ${place.tariff}`;
+  return place.priceText;
+}
+
+function placeKindLabel(place: ParkingPlace) {
+  if ((place.evSpaces ?? 0) > 0) return "Laddplats";
+  if ((place.disabledSpaces ?? 0) > 0) return "Rörelsehindrade";
+  if ((place.mcSpaces ?? 0) > 0) return "MC-parkering";
+  if (place.kind === "garage") return "Parkeringsgarage";
+  if (place.kind === "surface") return "Markparkering";
+  return "Gatuparkering";
 }
 
 function pointInPolygon(point: LatLng, polygon: LatLng[]) {
@@ -81,8 +144,9 @@ function tariffAt(point: LatLng): TariffId | null {
 function parkingIcon(place: ParkingPlace, selected: boolean) {
   const isEv = (place.evSpaces ?? 0) > 0;
   const isDisabled = (place.disabledSpaces ?? 0) > 0;
-  const color = isEv ? "#7c3aed" : isDisabled ? "#2563eb" : place.free ? "#16a36f" : place.tariff ? TARIFFS[place.tariff].color : "#172536";
-  const letter = isEv ? "E" : isDisabled ? "H" : place.free ? "G" : place.kind === "garage" ? "G" : "P";
+  const isMc = (place.mcSpaces ?? 0) > 0;
+  const color = placeColor(place);
+  const letter = isEv ? "E" : isDisabled ? "H" : isMc ? "M" : place.free ? "G" : place.kind === "garage" ? "G" : "P";
   return L.divIcon({
     className: "parking-marker-wrap",
     html: `<div class="parking-marker${selected ? " is-selected" : ""}" style="--marker-color:${color}"><span>${letter}</span></div>`,
@@ -103,6 +167,40 @@ function userIcon() {
 function formatDistance(km: number) {
   if (km < 1) return `${Math.max(20, Math.round((km * 1000) / 10) * 10)} m`;
   return `${km.toFixed(1).replace(".", ",")} km`;
+}
+
+function formatRouteDistance(meters: number) {
+  return meters < 1000 ? `${Math.max(10, Math.round(meters / 10) * 10)} m` : `${(meters / 1000).toFixed(1).replace(".", ",")} km`;
+}
+
+function navigationInstruction(type?: string, modifier?: string, name?: string, exit?: number) {
+  const road = name ? ` på ${name}` : "";
+  const direction = modifier === "left" ? "vänster" : modifier === "right" ? "höger" : modifier === "slight left" ? "svagt vänster" : modifier === "slight right" ? "svagt höger" : modifier === "sharp left" ? "skarpt vänster" : modifier === "sharp right" ? "skarpt höger" : "rakt fram";
+  if (type === "depart") return name ? `Kör ut på ${name}` : "Starta körningen";
+  if (type === "arrive") return "Du är framme vid parkeringen";
+  if (type === "roundabout" || type === "rotary") return exit ? `Ta avfart ${exit} i rondellen${road}` : `Kör in i rondellen${road}`;
+  if (type === "merge") return `Foga in${road}`;
+  if (type === "fork") return `Håll ${direction}${road}`;
+  if (type === "continue" || type === "new name") return name ? `Fortsätt på ${name}` : "Fortsätt rakt fram";
+  if (type === "turn" || type === "end") return `Sväng ${direction}${road}`;
+  return name ? `Fortsätt på ${name}` : "Fortsätt på vägen";
+}
+
+function routeProgress(position: LatLng, positions: LatLng[]) {
+  let nearestIndex = 0;
+  let nearestMeters = Number.POSITIVE_INFINITY;
+  positions.forEach((routePosition, index) => {
+    const meters = distanceKm(position, routePosition) * 1000;
+    if (meters < nearestMeters) {
+      nearestMeters = meters;
+      nearestIndex = index;
+    }
+  });
+  let remainingMeters = nearestMeters;
+  for (let index = nearestIndex; index < positions.length - 1; index += 1) {
+    remainingMeters += distanceKm(positions[index], positions[index + 1]) * 1000;
+  }
+  return { nearestMeters, remainingMeters };
 }
 
 const OSM_SOCKET_NAMES: Record<string, string> = {
@@ -163,7 +261,8 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
     const lng = Number(element.lon ?? center?.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
 
-    const isDisabledSpace = tags.amenity === "parking_space" && tags.disabled === "yes";
+    const isDisabledSpace = tags.amenity === "parking_space" && ["yes", "designated"].includes(tags.disabled);
+    const isMotorcycleSpace = tags.amenity === "parking_space" && ["yes", "designated", "only"].includes(tags.motorcycle);
     const isChargingStation = tags.amenity === "charging_station";
 
     const parkingTag = tags.parking || "surface";
@@ -172,10 +271,8 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       : parkingTag === "street_side" || parkingTag === "lane"
         ? "street"
         : "surface";
-    const inTariffZone = tariffAt([lat, lng]) !== null;
-    const free = tags.fee === "no" || (tags.fee !== "yes" && !inTariffZone);
-    const tariff = free ? null : tariffAt([lat, lng]);
-    const name = isDisabledSpace ? "Handikapparkering" : isChargingStation ? (tags.name || tags.operator || "Laddstation") : tags.name || tags.operator || (kind === "garage" ? "Parkeringsgarage" : "Parkering");
+    const free = tags.fee === "no";
+    const name = isDisabledSpace ? "Parkering för rörelsehindrade" : isMotorcycleSpace ? "MC-parkering" : isChargingStation ? (tags.name || tags.operator || "Laddstation") : tags.name || tags.operator || (kind === "garage" ? "Parkeringsgarage" : "Parkering");
     const streetAddress = [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" ");
     const disabledSpacesVal = (() => {
       if (isDisabledSpace) return 1;
@@ -188,6 +285,13 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
     })();
     const evSpacesVal = isChargingStation ? (Number.isFinite(Number(tags.capacity)) ? Number(tags.capacity) : 1) : Number.isFinite(Number(tags["capacity:charging"])) ? Number(tags["capacity:charging"]) : undefined;
     const evConnectionsVal = isChargingStation ? parseOsmSocketTags(tags) : undefined;
+    const mcSpacesVal = isMotorcycleSpace
+      ? 1
+      : Number.isFinite(Number(tags["capacity:motorcycle"]))
+        ? Number(tags["capacity:motorcycle"])
+        : ["yes", "designated", "only"].includes(tags.motorcycle)
+          ? Number(tags.capacity) || 1
+          : undefined;
 
     return [{
       id: `osm-${String(element.type)}-${String(element.id)}`,
@@ -197,20 +301,23 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       lat,
       lng,
       kind: isChargingStation ? "surface" : kind,
-      tariff,
+      tariff: null,
       free,
-      priceText: free ? "Gratis" : tags.charge || (tags.fee === "yes" ? "Avgift" : "Villkor okända"),
+      priceText: free ? "Avgiftsfri enligt OpenStreetMap" : tags.charge || (tags.fee === "yes" ? "Avgift enligt OpenStreetMap" : "Pris ej verifierat"),
       note: isDisabledSpace
         ? "Handikapparkering. Gällande regler skyltas på plats."
-        : isChargingStation
-          ? "Laddstation för elbil enligt OpenStreetMap."
+        : isMotorcycleSpace
+          ? "MC-parkering enligt OpenStreetMap. Kontrollera skyltning och fordonsslag på plats."
+          : isChargingStation
+          ? "Laddstation enligt OpenStreetMap. Ladd- och parkeringsavgift verifieras inte av denna källa."
           : free
             ? tags.fee === "no"
               ? "Markerad som avgiftsfri i OpenStreetMap. Kontrollera skyltningen på plats."
-              : "Utanför Stockholms taxeområden. Parkering är avgiftsfri om inte annat skyltas."
-            : "Parkeringsplats från OpenStreetMap. Aktuella villkor står vid infarten eller på gatuskylten.",
+              : "Markerad som avgiftsfri i OpenStreetMap. Kontrollera alltid skyltning på plats."
+            : "Pris saknas eller är osäkert i OpenStreetMap. Kontrollera infart eller skyltning på plats.",
       spaces: Number.isFinite(Number(tags.capacity)) ? Number(tags.capacity) : undefined,
       disabledSpaces: disabledSpacesVal,
+      mcSpaces: mcSpacesVal,
       evSpaces: evSpacesVal,
       evConnections: evConnectionsVal,
       source: "osm",
@@ -226,6 +333,7 @@ type ApiFacility = {
   Anlaggningstyp?: string;
   AntalBesokPlatser?: number;
   AntalBesokPlatserRorelsehindrad?: number;
+  AntalBesokPlatserMc?: number;
   AntalLaddplatserBesokBil?: number;
   AntalLaddplatserBesokMc?: number;
   Omrade?: string;
@@ -242,10 +350,9 @@ function parseApiParking(payload: unknown): ParkingPlace[] {
 
     const totalSpots = f.AntalBesokPlatser ?? 0;
     const kind = f.Anlaggningstyp === "Garage" ? "garage" : "surface";
-    const hasSpots = totalSpots > 0;
-
     const tax = f.BesokstaxaCollection?.find((t) => t.Taxa != null);
-    const priceText = tax ? `${tax.Taxa} kr/${tax.Tidsenhet?.toLowerCase() ?? "timme"}` : "Infartsparkering";
+    const free = tax?.Taxa === 0;
+    const priceText = free ? "Avgiftsfri enligt Stockholm Parkering" : tax ? `${tax.Taxa} kr/${tax.Tidsenhet?.toLowerCase() ?? "timme"}` : "Pris ej rapporterat";
 
     return [{
       id: `api-${f.Name.replace(/\s+/g, "-")}`,
@@ -256,15 +363,14 @@ function parseApiParking(payload: unknown): ParkingPlace[] {
       lng,
       kind,
       tariff: null,
-      free: !tax && hasSpots,
+      free,
       priceText,
-      note: !hasSpots
-        ? "Infartsparkering enligt Stockholms stads register."
-        : tax
+      note: tax
           ? `Taxa: ${tax.Galler ?? "Se skyltning"}. ${tax.Taxa} kr/${tax.Tidsenhet?.toLowerCase() ?? "tim"}.`
-          : "Avgiftsfri infartsparkering enligt Stockholms stads register.",
+          : "Pris saknas i Stockholm Parkerings API. Kontrollera skyltningen på plats.",
       spaces: totalSpots > 0 ? totalSpots : undefined,
       disabledSpaces: (f.AntalBesokPlatserRorelsehindrad ?? 0) > 0 ? f.AntalBesokPlatserRorelsehindrad : undefined,
+      mcSpaces: (f.AntalBesokPlatserMc ?? 0) > 0 ? f.AntalBesokPlatserMc : undefined,
       evSpaces: (f.AntalLaddplatserBesokBil ?? 0) > 0 ? f.AntalLaddplatserBesokBil : undefined,
       source: "api",
     }];
@@ -348,12 +454,177 @@ function parseOcmParking(payload: unknown): ParkingPlace[] {
       lng: addr.Longitude,
       kind: "surface",
       tariff: null,
-      free: true,
-      priceText: p.UsageCost || "Laddstation",
-      note: addr.AccessComments ? "Info: " + addr.AccessComments : "Laddstation från Open Charge Map.",
+      free: false,
+      priceText: p.UsageCost || "Laddkostnad ej rapporterad",
+      note: addr.AccessComments ? "Info: " + addr.AccessComments : "Laddstation från Open Charge Map. Avgift är inte verifierad.",
       evSpaces: totalPoints,
       evConnections: connections.length > 0 ? connections : undefined,
       source: "ocm",
+    }];
+  });
+}
+
+type OfficialFeature = {
+  id?: string | number;
+  type?: string;
+  geometry?: { type?: string; coordinates?: unknown };
+  properties?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+
+type OfficialRule = "pmotorcykel" | "prorelsehindrad" | "ptillaten";
+const OFFICIAL_RULES: OfficialRule[] = ["pmotorcykel", "prorelsehindrad", "ptillaten"];
+
+function officialCoordinates(value: unknown): LatLng | null {
+  if (!Array.isArray(value)) return null;
+  if (value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) {
+    const [lng, lat] = value.map(Number);
+    return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lat, lng] : null;
+  }
+  for (const child of value) {
+    const point = officialCoordinates(child);
+    if (point) return point;
+  }
+  return null;
+}
+
+function officialProperty(properties: Record<string, unknown>, ...names: string[]): string | undefined {
+  const matchingName = Object.keys(properties).find((key) =>
+    names.some((name) => key.toLowerCase() === name.toLowerCase()),
+  );
+  const value = matchingName ? properties[matchingName] : undefined;
+  return typeof value === "string" || typeof value === "number" ? String(value).trim() || undefined : undefined;
+}
+
+function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): ParkingPlace[] {
+  const container = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const features = Array.isArray(payload)
+    ? payload
+    : Array.isArray(container.features)
+      ? container.features
+      : Object.values(container).find(Array.isArray) ?? [];
+  if (!Array.isArray(features)) return [];
+
+  const isMotorcycle = rule === "pmotorcykel";
+  const isDisabled = rule === "prorelsehindrad";
+  return (features as OfficialFeature[]).flatMap((feature, index): ParkingPlace[] => {
+    const properties = feature.properties ?? feature as Record<string, unknown>;
+    const geometry = feature.geometry ?? properties.geometry as OfficialFeature["geometry"];
+    const point = officialCoordinates(geometry?.coordinates ?? properties.coordinates ?? properties.koordinater);
+    if (!point) return [];
+    const [lat, lng] = point;
+    const streetName = officialProperty(properties, "street_name", "gata", "street", "gatunamn");
+    const addressValue = officialProperty(properties, "address", "adress");
+    const address = addressValue && !/^<.*saknas>$/i.test(addressValue) ? addressValue : streetName;
+    const citation = officialProperty(properties, "citation", "föreskrift", "foreskrift");
+    const otherInfo = officialProperty(properties, "other_info", "beskrivning", "description");
+    const tariff = officialProperty(properties, "parking_rate", "avgift", "taxa");
+    const placeType = officialProperty(properties, "vf_plats_typ");
+    const isFree = /^avgiftsfri\b/i.test(tariff ?? "");
+    const identifier = String(feature.id ?? officialProperty(properties, "id", "objectid", "feature_object_id", "fid") ?? `${lat}-${lng}-${index}`);
+    return [{
+      id: `stockholm-open-data-${rule}-${identifier}`,
+      name: isMotorcycle ? "MC-parkering" : isDisabled ? "Parkering för rörelsehindrade" : placeType || "Gatuparkering",
+      address: address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      area: "Stockholms stad",
+      lat,
+      lng,
+      kind: "street",
+      tariff: null,
+      free: isFree,
+      priceText: tariff == null ? "Taxa ej rapporterad i föreskriften" : `Taxa enligt Stockholms stad: ${String(tariff)}`,
+      note: [citation && `Föreskrift: ${citation}`, otherInfo].filter(Boolean).join(" · ") || (isMotorcycle
+        ? "Endast motorcyklar enligt Stockholms stads gällande föreskrift. Kontrollera skyltning på plats."
+        : isDisabled
+          ? "För rörelsehindrade med tillstånd enligt Stockholms stads gällande föreskrift. Kontrollera skyltning på plats."
+          : "Tillåten gatuparkering enligt Stockholms stads gällande föreskrift. Kontrollera alltid skyltning på plats."),
+      disabledSpaces: isDisabled ? 1 : undefined,
+      mcSpaces: isMotorcycle ? 1 : undefined,
+      source: "stockholm-open-data",
+    }];
+  });
+}
+
+async function fetchOverpass(query: string) {
+  let lastError: Error | undefined;
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`);
+      if (!response.ok) throw new Error(`Overpass svarade ${response.status}`);
+      return response.json();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Overpass kunde inte nås");
+    }
+  }
+  throw lastError ?? new Error("Overpass kunde inte nås");
+}
+
+function parkingTileQueries() {
+  const latSteps = [59.2, 59.28, 59.36, 59.43];
+  const lngSteps = [17.75, 17.89, 18.03, 18.17, 18.3];
+  const queries: string[] = [];
+  for (let latIndex = 0; latIndex < latSteps.length - 1; latIndex += 1) {
+    for (let lngIndex = 0; lngIndex < lngSteps.length - 1; lngIndex += 1) {
+      queries.push(`[out:json][timeout:55];nwr["amenity"="parking"](${latSteps[latIndex]},${lngSteps[lngIndex]},${latSteps[latIndex + 1]},${lngSteps[lngIndex + 1]});out center tags;`);
+    }
+  }
+  return queries;
+}
+
+type NobilStation = {
+  csmd?: NobilStation;
+  id?: string | number;
+  active?: boolean | number | string;
+  name?: string;
+  address?: string;
+  city?: string;
+  geolocation?: string;
+  chargerpointnumber?: number | string;
+  usercomment?: string;
+  accessibility?: string;
+  parkingfee?: boolean | number | string;
+  Street?: string;
+  House_number?: string;
+  City?: string;
+  Position?: string;
+  Number_charging_points?: number | string;
+  Description_of_location?: string;
+  User_comment?: string;
+  Station_status?: number | string;
+  International_id?: string;
+};
+
+function parseNobilParking(payload: unknown): ParkingPlace[] {
+  const items = Array.isArray(payload)
+    ? payload
+    : payload && typeof payload === "object"
+      ? Object.values(payload as Record<string, unknown>).find(Array.isArray) ?? []
+      : [];
+  if (!Array.isArray(items)) return [];
+
+  return (items as NobilStation[]).flatMap((station): ParkingPlace[] => {
+    const details = station.csmd ?? station;
+    if (details.active === false || details.active === 0 || details.active === "false" || details.Station_status === 0 || details.Station_status === "0") return [];
+    const coordinates = (details.geolocation ?? details.Position)?.match(/\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/);
+    if (!coordinates) return [];
+    const lat = Number(coordinates[1]);
+    const lng = Number(coordinates[2]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+
+    return [{
+      id: `nobil-${String(details.International_id ?? details.id ?? `${lat}-${lng}`)}`,
+      name: details.name || "Laddstation",
+      address: details.address || [details.Street, details.House_number].filter(Boolean).join(" ") || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      area: details.city || details.City || "Stockholm",
+      lat,
+      lng,
+      kind: "surface",
+      tariff: null,
+      free: false,
+      priceText: "Laddkostnad ej rapporterad",
+      note: [details.accessibility, details.usercomment, details.Description_of_location, details.User_comment].filter(Boolean).join(". ") || "Laddstation från NOBIL. Avgift är inte verifierad.",
+      evSpaces: Number(details.chargerpointnumber ?? details.Number_charging_points) > 0 ? Number(details.chargerpointnumber ?? details.Number_charging_points) : 1,
+      source: "nobil",
     }];
   });
 }
@@ -365,7 +636,12 @@ function categoryLabel(category: Category) {
   if (category === "free") return "Gratis";
   if (category === "disabled") return "Handikapp";
   if (category === "ev") return "Elbil";
+  if (category === "mc") return "MC";
   return "Alla parkeringar";
+}
+
+function replaceSource(places: ParkingPlace[], source: ParkingPlace["source"], incoming: ParkingPlace[]) {
+  return [...places.filter((place) => place.source !== source), ...incoming];
 }
 
 function App() {
@@ -376,7 +652,12 @@ function App() {
   const routeLayerRef = useRef<LayerGroup | null>(null);
   const clickLayerRef = useRef<LayerGroup | null>(null);
   const lastGeocodeRef = useRef(0);
-  const deferredPromptRef = useRef<any>(null);
+  const lastMcFitCountRef = useRef(0);
+  const officialRuleParkingRef = useRef<Partial<Record<OfficialRule, ParkingPlace[]>>>({});
+  const routeInfoRef = useRef<RouteInfo | null>(null);
+  const lastRerouteRef = useRef(0);
+  const deferredPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
+  const installActionRef = useRef<HTMLButtonElement>(null);
 
   const [allParking, setAllParking] = useState<ParkingPlace[]>(LOCAL_PARKING);
   const [category, setCategory] = useState<Category>("all");
@@ -403,6 +684,8 @@ function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [canInstall, setCanInstall] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
+  const [pwaInstallOpen, setPwaInstallOpen] = useState(false);
+  const [installPlatform, setInstallPlatform] = useState<InstallPlatform | null>(null);
 
   // Nya states för Dark Mode, Kartklick och Sökförslag
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("parksthlm-dark") === "true");
@@ -410,6 +693,10 @@ function App() {
   const [clickedAddress, setClickedAddress] = useState<string | null>(null);
   const [clickedLoading, setClickedLoading] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
+
+  useEffect(() => {
+    routeInfoRef.current = routeInfo;
+  }, [routeInfo]);
 
   // Synka Dark Mode i DOM:en
   useEffect(() => {
@@ -424,7 +711,6 @@ function App() {
   // Skapa virtuell parkeringsplats för klickad koordinat för rutt/navigering
   const clickedPlace = useMemo<ParkingPlace | null>(() => {
     if (!clickedPosition) return null;
-    const tariff = tariffAt(clickedPosition);
     return {
       id: "clicked-pos",
       name: clickedAddress || "Vald kartposition",
@@ -433,10 +719,10 @@ function App() {
       lat: clickedPosition[0],
       lng: clickedPosition[1],
       kind: "street",
-      tariff,
-      free: tariff === null,
-      priceText: tariff ? TARIFFS[tariff].price : "Gratis",
-      note: "Kartposition du valt. Kontrollera alltid skyltar på platsen för eventuella lokala regler.",
+      tariff: null,
+      free: false,
+      priceText: "Pris ej verifierat",
+      note: "Kartposition utan verifierad parkeringstaxa. Kontrollera alltid skyltar och betalningsapp på plats.",
       source: "local"
     };
   }, [clickedPosition, clickedAddress]);
@@ -447,13 +733,13 @@ function App() {
   }, []);
 
   const fetchOsmParking = useCallback(async (force = false) => {
-    const CACHE_VERSION = 4;
+    const CACHE_VERSION = 6;
     const cachedRaw = localStorage.getItem("parksthlm-osm");
     if (cachedRaw && !force) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
         if (cached.version !== CACHE_VERSION) throw new Error("cache-version-mismatch");
-        if (Array.isArray(cached.places)) setAllParking((prev) => [...LOCAL_PARKING, ...cached.places, ...prev.filter((p) => p.source === "api")]);
+        if (Array.isArray(cached.places)) setAllParking((prev) => replaceSource(prev, "osm", cached.places));
         if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
       } catch {
         localStorage.removeItem("parksthlm-osm");
@@ -463,12 +749,18 @@ function App() {
 
     setDataLoading(true);
     try {
-      const overpassQuery = `[out:json][timeout:35];(nwr["amenity"="parking"](around:12000,59.3293,18.0686);nwr["amenity"="parking_space"]["disabled"="yes"](around:12000,59.3293,18.0686););out center tags;`;
-      const response = await fetch(`${OVERPASS_ENDPOINT}?data=${encodeURIComponent(overpassQuery)}`);
-      if (!response.ok) throw new Error("Kunde inte hämta parkeringsdata");
-      const places = parseOsmParking(await response.json()).slice(0, 500);
+      const payloads: unknown[] = [];
+      const queries = parkingTileQueries();
+      for (let index = 0; index < queries.length; index += 3) {
+        const batch = await Promise.allSettled(queries.slice(index, index + 3).map(fetchOverpass));
+        payloads.push(...batch.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
+      }
+      if (payloads.length === 0) throw new Error("Kunde inte hämta parkeringsdata");
+      const byId = new Map<string, ParkingPlace>();
+      payloads.flatMap(parseOsmParking).forEach((place) => byId.set(place.id, place));
+      const places = [...byId.values()];
       localStorage.setItem("parksthlm-osm", JSON.stringify({ timestamp: Date.now(), version: CACHE_VERSION, places }));
-      setAllParking((prev) => [...LOCAL_PARKING, ...places, ...prev.filter((p) => p.source === "api")]);
+      setAllParking((prev) => replaceSource(prev, "osm", places));
       if (force) showNotice(`${places.length} parkeringsplatser uppdaterades`);
     } catch {
       if (force) showNotice("Live-data kunde inte nås. Sparad data används.");
@@ -483,8 +775,8 @@ function App() {
     if (cachedRaw && !force) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version !== 1) throw new Error("cache-version");
-        if (Array.isArray(cached.places)) setAllParking((prev) => [...prev.filter((p) => p.source !== "api"), ...cached.places]);
+        if (cached.version !== 2) throw new Error("cache-version");
+        if (Array.isArray(cached.places)) setAllParking((prev) => replaceSource(prev, "api", cached.places));
         if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
       } catch {
         localStorage.removeItem(CACHE_KEY);
@@ -492,12 +784,11 @@ function App() {
     }
     if (!navigator.onLine) return;
     try {
-      const url = STHLM_PARK_API + "/GetAllAnlaggningParkeringsInfo";
-      const response = await fetch(url);
+      const response = await fetch("/api/stockholm-parking");
       if (!response.ok) throw new Error("Kunde inte hämta infartsparkeringar");
       const places = parseApiParking(await response.json());
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
-      setAllParking((prev) => [...prev.filter((p) => p.source !== "api"), ...places]);
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
+      setAllParking((prev) => replaceSource(prev, "api", places));
       if (force) showNotice(places.length + " infartsparkeringar uppdaterades");
     } catch {
       if (force) showNotice("Infartsparkeringar kunde inte nås. Sparad data används.");
@@ -533,6 +824,83 @@ function App() {
     } catch { /* silent */ }
   }, []);
 
+  const fetchVerifiedRuleParking = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const key = "parksthlm-verified-rules";
+    const cachedRaw = localStorage.getItem(key);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+        if (cached.version === 2 && Array.isArray(cached.places)) {
+          setAllParking((prev) => {
+            const existingIds = new Set(prev.map((place) => place.id));
+            return [...prev, ...cached.places.filter((place) => !existingIds.has(place.id))];
+          });
+          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
+        }
+      } catch {
+        localStorage.removeItem(key);
+      }
+    }
+
+    const bounds = `${STOCKHOLM_BOUNDS.south},${STOCKHOLM_BOUNDS.west},${STOCKHOLM_BOUNDS.north},${STOCKHOLM_BOUNDS.east}`;
+    const queries = [
+      `[out:json][timeout:60];nwr["amenity"="parking"]["fee"="no"](${bounds});out center tags;`,
+      `[out:json][timeout:60];(nwr["amenity"="parking_space"]["disabled"](${bounds});nwr["amenity"="parking"]["capacity:disabled"](${bounds});nwr["amenity"="parking"]["disabled:capacity"](${bounds}););out center tags;`,
+    ];
+
+    try {
+      const payloads = await Promise.all(queries.map(fetchOverpass));
+      const byId = new Map<string, ParkingPlace>();
+      payloads.flatMap(parseOsmParking).forEach((place) => byId.set(place.id, place));
+      const places = [...byId.values()];
+      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+      setAllParking((prev) => {
+        const existingIds = new Set(prev.map((place) => place.id));
+        return [...prev, ...places.filter((place) => !existingIds.has(place.id))];
+      });
+    } catch {
+      // The map retains any cached rule data when Overpass is temporarily unavailable.
+    }
+  }, []);
+
+  const fetchOfficialRuleParking = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const cacheKey = "parksthlm-stockholm-open-data";
+    const replaceOfficialData = () => {
+      const places = OFFICIAL_RULES.flatMap((rule) => officialRuleParkingRef.current[rule] ?? []);
+      localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 3, places }));
+      setAllParking((prev) => replaceSource(prev, "stockholm-open-data", places));
+    };
+
+    const cachedRaw = localStorage.getItem(cacheKey);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+        if (cached.version === 3 && Array.isArray(cached.places)) {
+          OFFICIAL_RULES.forEach((rule) => {
+            officialRuleParkingRef.current[rule] = cached.places.filter((place) => place.id.startsWith(`stockholm-open-data-${rule}-`));
+          });
+          setAllParking((prev) => replaceSource(prev, "stockholm-open-data", cached.places));
+          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
+        }
+      } catch {
+        localStorage.removeItem(cacheKey);
+      }
+    }
+
+    await Promise.all(OFFICIAL_RULES.map(async (rule) => {
+      try {
+        const response = await fetch(`/api/stockholm-open-data/${rule}`);
+        if (!response.ok) return;
+        officialRuleParkingRef.current[rule] = parseOfficialRuleParking(await response.json(), rule);
+        replaceOfficialData();
+      } catch {
+        // A slow or unavailable rule layer must not hide successfully loaded MC parking.
+      }
+    }));
+  }, []);
+
   const fetchEvCharging = useCallback(async () => {
     if (!navigator.onLine) return;
     const key = "parksthlm-ev";
@@ -540,7 +908,7 @@ function App() {
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 1 && Array.isArray(cached.places)) {
+        if (cached.version === 2 && Array.isArray(cached.places)) {
           setAllParking((prev) => {
             const existingIds = new Set(prev.filter((p) => p.source !== "osm-ev").map((p) => p.id));
             return [...prev.filter((p) => p.source !== "osm-ev"), ...cached.places.filter((p) => !existingIds.has(p.id))];
@@ -570,7 +938,7 @@ function App() {
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 1 && Array.isArray(cached.places)) {
+        if (cached.version === 2 && Array.isArray(cached.places)) {
           ocmPlaces = cached.places;
           setAllParking((prev) => {
             const injected = prev.map((p) => {
@@ -586,14 +954,10 @@ function App() {
       } catch { localStorage.removeItem(key); }
     }
     try {
-      const url = "https://api.openchargemap.io/v3/poi/?output=json"
-        + "&countrycode=SE&latitude=59.3293&longitude=18.0686&distance=25"
-        + "&maxresults=5000&compact=true&verbose=false"
-        + "&key=" + OCM_API_KEY;
-      const res = await fetch(url);
+      const res = await fetch("/api/open-charge-map");
       if (!res.ok) return;
       ocmPlaces = parseOcmParking(await res.json());
-      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places: ocmPlaces }));
+      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places: ocmPlaces }));
       setAllParking((prev) => {
         const injected = prev.map((p) => {
           if ((p.evSpaces ?? 0) === 0 || (p.evConnections ?? []).length > 0) return p;
@@ -606,13 +970,43 @@ function App() {
     } catch { /* silent */ }
   }, []);
 
+  const fetchNobilCharging = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const key = "parksthlm-nobil";
+    const cachedRaw = localStorage.getItem(key);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+        if (cached.version === 1 && Array.isArray(cached.places)) {
+          setAllParking((prev) => replaceSource(prev, "nobil", cached.places));
+          if (Date.now() - cached.timestamp < 60 * 60 * 1000) return;
+        }
+      } catch {
+        localStorage.removeItem(key);
+      }
+    }
+
+    try {
+      const response = await fetch("/api/nobil", { method: "POST" });
+      if (!response.ok) return;
+      const places = parseNobilParking(await response.json());
+      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+      setAllParking((prev) => replaceSource(prev, "nobil", places));
+    } catch {
+      // Cached NOBIL data is retained if the provider cannot be reached.
+    }
+  }, []);
+
   useEffect(() => {
     void fetchOsmParking();
     void fetchApiParking();
     void fetchDisabledParking();
+    void fetchVerifiedRuleParking();
+    void fetchOfficialRuleParking();
     void fetchEvCharging();
     void fetchOcmCharging();
-  }, [fetchOsmParking, fetchApiParking, fetchDisabledParking, fetchEvCharging, fetchOcmCharging]);
+    void fetchNobilCharging();
+  }, [fetchOsmParking, fetchApiParking, fetchDisabledParking, fetchVerifiedRuleParking, fetchOfficialRuleParking, fetchEvCharging, fetchOcmCharging, fetchNobilCharging]);
 
   useEffect(() => {
     const handleOnline = () => {
@@ -620,8 +1014,11 @@ function App() {
       void fetchOsmParking();
       void fetchApiParking();
       void fetchDisabledParking();
+      void fetchVerifiedRuleParking();
+      void fetchOfficialRuleParking();
       void fetchEvCharging();
       void fetchOcmCharging();
+      void fetchNobilCharging();
     };
     const handleOffline = () => setOnline(false);
     window.addEventListener("online", handleOnline);
@@ -630,7 +1027,7 @@ function App() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [fetchOsmParking]);
+  }, [fetchOsmParking, fetchApiParking, fetchDisabledParking, fetchVerifiedRuleParking, fetchOfficialRuleParking, fetchEvCharging, fetchOcmCharging, fetchNobilCharging]);
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
@@ -638,20 +1035,34 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const isStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || 
-                          (window.navigator as any).standalone === true;
+    const isStandaloneMode = window.matchMedia("(display-mode: standalone)").matches ||
+                          (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
     setIsStandalone(isStandaloneMode);
+
+    const shouldOfferInstall = isMobileDevice() && !isStandaloneMode && !hasRecentPwaInstallDismissal();
+    if (shouldOfferInstall && isIosDevice()) {
+      setInstallPlatform("ios");
+      setPwaInstallOpen(true);
+    }
 
     // Check if inline script already captured the event before React mounted
     if ((window as any).__ipp) {
-      deferredPromptRef.current = (window as any).__ipp;
+      deferredPromptRef.current = (window as any).__ipp as BeforeInstallPromptEvent;
       setCanInstall(true);
+      if (shouldOfferInstall && !isIosDevice()) {
+        setInstallPlatform("android");
+        setPwaInstallOpen(true);
+      }
     }
 
-    const handleBeforeInstallPrompt = (e: any) => {
+    const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
-      deferredPromptRef.current = e;
+      deferredPromptRef.current = e as BeforeInstallPromptEvent;
       setCanInstall(true);
+      if (shouldOfferInstall && !isIosDevice()) {
+        setInstallPlatform("android");
+        setPwaInstallOpen(true);
+      }
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
@@ -660,6 +1071,20 @@ function App() {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     };
   }, []);
+
+  useEffect(() => {
+    if (!pwaInstallOpen) return;
+
+    const focusInstallAction = window.requestAnimationFrame(() => installActionRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismissPwaInstall();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(focusInstallAction);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [pwaInstallOpen]);
 
   useEffect(() => {
     if (!mapNodeRef.current || mapRef.current) return;
@@ -683,6 +1108,8 @@ function App() {
     map.getPane("taxStreets")!.style.zIndex = "330";
     map.createPane("parking");
     map.getPane("parking")!.style.zIndex = "480";
+    map.createPane("charging");
+    map.getPane("charging")!.style.zIndex = "470";
     map.createPane("route");
     map.getPane("route")!.style.zIndex = "450";
 
@@ -814,11 +1241,31 @@ function App() {
     if (category === "street") return place.kind === "street" || place.kind === "surface";
     if (category === "disabled") return (place.disabledSpaces ?? 0) > 0;
     if (category === "ev") return (place.evSpaces ?? 0) > 0;
+    if (category === "mc") return (place.mcSpaces ?? 0) > 0;
     return place.tariff === category;
   }, [category]);
 
   const filteredParking = useMemo(() => allParking.filter(matchesCategory), [allParking, matchesCategory]);
   const focusPosition = userPosition || searchPosition || viewCenter;
+  const selectedParkingTariff = selectedParking && isTariffId(selectedParking.tariff) ? selectedParking.tariff : null;
+
+  useEffect(() => {
+    if (category !== "mc") {
+      lastMcFitCountRef.current = 0;
+      return;
+    }
+
+    const map = mapRef.current;
+    const motorcyclePlaces = allParking.filter((place) => (place.mcSpaces ?? 0) > 0);
+    if (!map || motorcyclePlaces.length < 2 || motorcyclePlaces.length <= lastMcFitCountRef.current) return;
+
+    lastMcFitCountRef.current = motorcyclePlaces.length;
+    map.fitBounds(L.latLngBounds(motorcyclePlaces.map((place) => [place.lat, place.lng])), {
+      padding: [52, 52],
+      maxZoom: 11,
+      animate: true,
+    });
+  }, [allParking, category]);
 
   const searchMatches = useMemo(() => {
     const needle = normalize(query);
@@ -835,12 +1282,16 @@ function App() {
     const layer = parkingLayerRef.current;
     if (!layer) return;
     layer.clearLayers();
-    const markerPlaces = mapZoom < 14
-      ? filteredParking.filter((place) => place.source === "local" || place.kind === "garage" || (place.disabledSpaces ?? 0) > 0 || (place.evSpaces ?? 0) > 0).slice(0, 120)
-      : filteredParking.slice(0, 500);
+    const visibleBounds = mapRef.current?.getBounds().pad(0.12);
+    const placesInView = visibleBounds
+      ? filteredParking.filter((place) => visibleBounds.contains([place.lat, place.lng]))
+      : filteredParking;
+    const markerPlaces = mapZoom < 12
+      ? placesInView.filter((place) => place.source === "local" || place.kind === "garage" || (place.disabledSpaces ?? 0) > 0 || (place.evSpaces ?? 0) > 0 || (place.mcSpaces ?? 0) > 0)
+      : placesInView;
     markerPlaces.forEach((place) => {
       L.marker([place.lat, place.lng], {
-        pane: "parking",
+        pane: (place.evSpaces ?? 0) > 0 && (place.disabledSpaces ?? 0) === 0 && (place.mcSpaces ?? 0) === 0 ? "charging" : "parking",
         icon: parkingIcon(place, selectedParking?.id === place.id),
         keyboard: true,
         title: place.name,
@@ -854,7 +1305,7 @@ function App() {
         })
         .addTo(layer);
     });
-  }, [filteredParking, mapZoom, selectedParking]);
+  }, [filteredParking, mapZoom, selectedParking, viewCenter]);
 
   const selectCategory = (next: Category, fit = false) => {
     setCategory(next);
@@ -898,6 +1349,11 @@ function App() {
     }
     if (["elbil", "laddplats", "el", "ladda", "ev"].includes(normalize(value))) {
       selectCategory("ev");
+      setQuery("");
+      return;
+    }
+    if (["mc", "motorcykel", "mc parkering", "motorcykelparkering"].includes(normalize(value))) {
+      selectCategory("mc");
       setQuery("");
       return;
     }
@@ -966,6 +1422,25 @@ function App() {
     showNotice("Visar parkeringar närmast den valda platsen");
   };
 
+  const updateUserLocation = useCallback((next: LatLng, accuracy: number, followRoute = false) => {
+    setUserPosition(next);
+    setSearchPosition(null);
+    const layer = locationLayerRef.current;
+    layer?.clearLayers();
+    if (layer) {
+      L.circle(next, {
+        pane: "parking",
+        radius: Math.min(accuracy, 220),
+        color: "#3478f6",
+        fillColor: "#3478f6",
+        fillOpacity: 0.08,
+        weight: 1,
+      }).addTo(layer);
+      L.marker(next, { pane: "parking", icon: userIcon(), title: "Din position" }).addTo(layer);
+    }
+    if (followRoute) mapRef.current?.panTo(next, { animate: true, duration: 0.45 });
+  }, []);
+
   const locateUser = () => {
     if (!navigator.geolocation) {
       showNotice("Din webbläsare saknar stöd för GPS");
@@ -975,23 +1450,9 @@ function App() {
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const next: LatLng = [position.coords.latitude, position.coords.longitude];
-        setUserPosition(next);
-        setSearchPosition(null);
+        updateUserLocation(next, position.coords.accuracy);
         setClickedPosition(null);
         setLocating(false);
-        const layer = locationLayerRef.current;
-        layer?.clearLayers();
-        if (layer) {
-          L.circle(next, {
-            pane: "parking",
-            radius: Math.min(position.coords.accuracy, 220),
-            color: "#3478f6",
-            fillColor: "#3478f6",
-            fillOpacity: 0.08,
-            weight: 1,
-          }).addTo(layer);
-          L.marker(next, { pane: "parking", icon: userIcon(), title: "Din position" }).addTo(layer);
-        }
         mapRef.current?.flyTo(next, 16, { duration: 1.2 });
         showNotice("GPS-position hittad");
       },
@@ -1003,33 +1464,45 @@ function App() {
     );
   };
 
-  const buildRoute = async (destination: ParkingPlace) => {
-    const start = userPosition || viewCenter;
-    if (!userPosition) showNotice("Rutten startar från kartans mitt. Aktivera GPS för din exakta position.");
+  const calculateRoute = useCallback(async (destination: ParkingPlace, start: LatLng, tracking: boolean) => {
     setRouteLoading(true);
     routeLayerRef.current?.clearLayers();
-    const drawRoute = (positions: LatLng[], fallback: boolean, distance: number, minutes: number) => {
+    const drawRoute = (positions: LatLng[], fallback: boolean, distance: number, minutes: number, steps: NavigationStep[] = []) => {
       const layer = routeLayerRef.current;
       if (!layer) return;
       L.polyline(positions, { pane: "route", color: "#ffffff", weight: 10, opacity: 0.92 }).addTo(layer);
       L.polyline(positions, { pane: "route", color: "#1266ee", weight: 6, opacity: 1, dashArray: fallback ? "7 10" : undefined }).addTo(layer);
       mapRef.current?.fitBounds(L.latLngBounds(positions), { paddingTopLeft: [420, 90], paddingBottomRight: [70, 170], maxZoom: 17 });
-      setRouteInfo({ distance, minutes, fallback, destination });
+      setRouteInfo({ distance, minutes, fallback, destination, positions, steps, currentStep: 0, remainingMeters: distance * 1000, tracking: tracking && !fallback, arrived: false });
       setSelectedParking(null);
     };
 
     try {
       if (!online) throw new Error("offline");
-      const url = `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=false`;
+      const url = `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=true`;
       const response = await fetch(url);
       if (!response.ok) throw new Error("route");
       const data = (await response.json()) as {
-        routes?: Array<{ distance: number; duration: number; geometry: { coordinates: [number, number][] } }>;
+        routes?: Array<{
+          distance: number;
+          duration: number;
+          geometry: { coordinates: [number, number][] };
+          legs?: Array<{ steps?: Array<{ distance: number; name?: string; maneuver?: { type?: string; modifier?: string; exit?: number; location?: [number, number] } }> }>;
+        }>;
       };
       const route = data.routes?.[0];
       if (!route) throw new Error("route");
       const positions = route.geometry.coordinates.map(([lng, lat]) => [lat, lng] as LatLng);
-      drawRoute(positions, false, route.distance / 1000, route.duration / 60);
+      const steps = (route.legs ?? []).flatMap((leg) => leg.steps ?? []).flatMap((step): NavigationStep[] => {
+        const location = step.maneuver?.location;
+        if (!location || !Number.isFinite(location[0]) || !Number.isFinite(location[1])) return [];
+        return [{
+          instruction: navigationInstruction(step.maneuver?.type, step.maneuver?.modifier, step.name, step.maneuver?.exit),
+          distance: step.distance,
+          location: [location[1], location[0]],
+        }];
+      });
+      drawRoute(positions, false, route.distance / 1000, route.duration / 60, steps);
     } catch {
       const direct = distanceKm(start, [destination.lat, destination.lng]);
       drawRoute([start, [destination.lat, destination.lng]], true, direct, (direct / 25) * 60);
@@ -1037,11 +1510,95 @@ function App() {
     } finally {
       setRouteLoading(false);
     }
-  };
+  }, [online, showNotice]);
 
   const clearRoute = () => {
     routeLayerRef.current?.clearLayers();
     setRouteInfo(null);
+  };
+
+  const buildRoute = (destination: ParkingPlace) => {
+    if (userPosition) {
+      void calculateRoute(destination, userPosition, true);
+      return;
+    }
+    if (!navigator.geolocation) {
+      showNotice("GPS saknas. Rutten startar från kartans mitt.");
+      void calculateRoute(destination, viewCenter, false);
+      return;
+    }
+
+    setRouteLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const start: LatLng = [position.coords.latitude, position.coords.longitude];
+        updateUserLocation(start, position.coords.accuracy);
+        void calculateRoute(destination, start, true);
+      },
+      () => {
+        showNotice("GPS nekades. Rutten startar från kartans mitt.");
+        void calculateRoute(destination, viewCenter, false);
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 10_000 },
+    );
+  };
+
+  useEffect(() => {
+    if (!routeInfo?.tracking || routeInfo.arrived || !navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const next: LatLng = [position.coords.latitude, position.coords.longitude];
+        updateUserLocation(next, position.coords.accuracy, true);
+        const activeRoute = routeInfoRef.current;
+        if (!activeRoute?.tracking) return;
+
+        const { nearestMeters, remainingMeters } = routeProgress(next, activeRoute.positions);
+        const arrived = distanceKm(next, [activeRoute.destination.lat, activeRoute.destination.lng]) * 1000 < 35;
+        let currentStep = activeRoute.currentStep;
+        while (currentStep < activeRoute.steps.length - 1 && distanceKm(next, activeRoute.steps[currentStep].location) * 1000 < 35) currentStep += 1;
+        setRouteInfo({ ...activeRoute, currentStep, remainingMeters, tracking: !arrived, arrived });
+
+        if (arrived) {
+          showNotice("Du är framme vid parkeringen");
+          return;
+        }
+        if (!activeRoute.fallback && nearestMeters > 90 && Date.now() - lastRerouteRef.current > 15_000) {
+          lastRerouteRef.current = Date.now();
+          showNotice("Du har lämnat rutten — räknar om");
+          void calculateRoute(activeRoute.destination, next, true);
+        }
+      },
+      () => showNotice("GPS-spårning avbröts. Kontrollera platsbehörigheten."),
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 5_000 },
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [calculateRoute, routeInfo?.arrived, routeInfo?.tracking, showNotice, updateUserLocation]);
+
+  const dismissPwaInstall = () => {
+    localStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, String(Date.now()));
+    setPwaInstallOpen(false);
+  };
+
+  const handlePwaInstall = async () => {
+    if (installPlatform === "ios") {
+      setPwaInstallOpen(false);
+      return;
+    }
+
+    const prompt = deferredPromptRef.current;
+    if (!prompt) return;
+
+    await prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    deferredPromptRef.current = null;
+    setCanInstall(false);
+    setPwaInstallOpen(false);
+
+    if (outcome === "accepted") {
+      showNotice("Appen installerad!");
+    } else {
+      localStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, String(Date.now()));
+    }
   };
 
   const saveOffline = async () => {
@@ -1162,6 +1719,7 @@ function App() {
           <button className={category === "free" ? "active" : ""} onClick={() => selectCategory("free")} type="button">Gratis</button>
           <button className={category === "disabled" ? "active" : ""} onClick={() => selectCategory("disabled")} type="button">Handikapp</button>
           <button className={category === "ev" ? "active" : ""} onClick={() => selectCategory("ev")} type="button">Elbil</button>
+          <button className={category === "mc" ? "active" : ""} onClick={() => selectCategory("mc")} type="button"><Bike size={15} /> MC</button>
           <button className="filter-button" onClick={() => setFiltersOpen((open) => !open)} type="button" aria-expanded={filtersOpen}>
             <SlidersHorizontal size={15} /> Taxor <ChevronDown size={14} />
           </button>
@@ -1229,6 +1787,10 @@ function App() {
                 <Zap size={16} className="text-blue" />
                 <span>Laddplatser (elbil)</span>
               </button>
+              <button type="button" onClick={() => { selectCategory("mc"); setSearchFocused(false); }} className="suggestion-item">
+                <Bike size={16} className="text-gray" />
+                <span>MC-parkering</span>
+              </button>
               
               <div className="suggestions-header">Sök efter taxa</div>
               <div className="suggestion-tariff-grid">
@@ -1280,15 +1842,15 @@ function App() {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.22, delay: Math.min(index * 0.025, 0.18) }}
                   >
-                    <span className="result-icon" style={{ "--place-color": place.free ? "#16a36f" : place.tariff ? TARIFFS[place.tariff].color : (place.disabledSpaces ?? 0) > 0 ? "#2563eb" : "#172536" } as React.CSSProperties}>
-                      {(place.disabledSpaces ?? 0) > 0 ? <Accessibility size={17} /> : place.kind === "garage" ? <Building2 size={17} /> : <ParkingCircle size={19} />}
+                    <span className="result-icon" style={{ "--place-color": placeColor(place) } as React.CSSProperties}>
+                      {(place.evSpaces ?? 0) > 0 ? <Zap size={17} /> : (place.disabledSpaces ?? 0) > 0 ? <Accessibility size={17} /> : (place.mcSpaces ?? 0) > 0 ? <Bike size={17} /> : place.kind === "garage" ? <Building2 size={17} /> : <ParkingCircle size={19} />}
                     </span>
                     <span className="result-copy">
                       <strong>{place.name}</strong>
                       <small>{place.address} · {place.area}</small>
                       <span>
-                        <b className={place.free ? "free" : ""}>{place.free ? "Gratis" : place.tariff ? `Taxa ${place.tariff}` : place.priceText}</b>
-                        <i>{(place.disabledSpaces ?? 0) > 0 ? "Handikapp" : place.kind === "garage" ? "Garage" : place.kind === "surface" ? "Markparkering" : "Gatuparkering"}</i>
+                        <b className={place.free ? "free" : ""}>{placeTariffLabel(place)}</b>
+                        <i>{placeKindLabel(place)}</i>
                       </span>
                     </span>
                     <span className="result-distance">{formatDistance(distance)}<Navigation size={14} /></span>
@@ -1352,23 +1914,24 @@ function App() {
           >
             <button className="sheet-close" type="button" onClick={() => setSelectedParking(null)} aria-label="Stäng"><X size={18} /></button>
             <div className="place-title">
-              <span style={{ "--place-color": selectedParking.free ? "#16a36f" : selectedParking.tariff ? TARIFFS[selectedParking.tariff].color : (selectedParking.disabledSpaces ?? 0) > 0 ? "#2563eb" : "#172536" } as React.CSSProperties}>
-                {(selectedParking.disabledSpaces ?? 0) > 0 ? <Accessibility size={21} /> : selectedParking.kind === "garage" ? <Warehouse size={21} /> : <ParkingCircle size={23} />}
+              <span style={{ "--place-color": placeColor(selectedParking) } as React.CSSProperties}>
+                {(selectedParking.evSpaces ?? 0) > 0 ? <Zap size={21} /> : (selectedParking.disabledSpaces ?? 0) > 0 ? <Accessibility size={21} /> : (selectedParking.mcSpaces ?? 0) > 0 ? <Bike size={21} /> : selectedParking.kind === "garage" ? <Warehouse size={21} /> : <ParkingCircle size={23} />}
               </span>
               <div>
-                <small>{selectedParking.kind === "garage" ? "Parkeringsgarage" : selectedParking.kind === "surface" ? "Markparkering" : "Gatuparkering"}</small>
+                <small>{placeKindLabel(selectedParking)}</small>
                 <h2>{selectedParking.name}</h2>
                 <p>{selectedParking.address}, {selectedParking.area}</p>
-                <span className="place-tariff" style={{ background: selectedParking.free ? "#16a36f" : TARIFFS[selectedParking.tariff!].color }}>
-                  {selectedParking.free ? "Gratis" : `Taxa ${selectedParking.tariff}`}
+                <span className="place-tariff" style={{ background: placeColor(selectedParking) }}>
+                  {placeTariffLabel(selectedParking)}
                 </span>
               </div>
             </div>
             <div className="place-facts">
-              <div><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParking.tariff ? getCurrentPrice(selectedParking.tariff).label : selectedParking.priceText}</strong></div>
+              <div><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParkingTariff ? getCurrentPrice(selectedParkingTariff).label : selectedParking.priceText}</strong></div>
               <div><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
               {(selectedParking.disabledSpaces ?? 0) > 0 ? <div><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
+              {(selectedParking.mcSpaces ?? 0) > 0 ? <div><small>MC</small><strong>{selectedParking.mcSpaces} plats{selectedParking.mcSpaces !== 1 ? "er" : ""}</strong></div> : null}
               {(selectedParking.evSpaces ?? 0) > 0 ? <div className="place-ev-header"><Zap size={16} /><small>Elladdning</small><strong>{selectedParking.evSpaces} plats{selectedParking.evSpaces !== 1 ? "er" : ""}</strong></div> : null}
               {selectedParking.evConnections?.map((c, i) => (
                 <div key={i} className="place-ev-conn">
@@ -1382,7 +1945,7 @@ function App() {
               ))}
               {selectedParking.evSpaces && !selectedParking.evConnections ? <span className="place-ev-missing">Ingen detaljerad information om laddkontakter finns tillgänglig för denna plats.</span> : null}
             </div>
-            <p className="place-note"><CircleAlert size={15} />{selectedParking.free ? "Detta område har ingen ordinarie taxa enligt kartgränserna. Lokala villkor och P-skiva kan gälla." : selectedParking.tariff ? TARIFFS[selectedParking.tariff].hours : selectedParking.note}</p>
+            <p className="place-note"><CircleAlert size={15} />{selectedParkingTariff ? TARIFFS[selectedParkingTariff].hours : selectedParking.note}</p>
             <div className="place-actions">
               <button type="button" className="primary-action" onClick={() => void buildRoute(selectedParking)} disabled={routeLoading}>
                 {routeLoading ? <RefreshCw className="spin" size={18} /> : <Navigation size={18} />} Navigera hit
@@ -1409,19 +1972,19 @@ function App() {
           >
             <button className="sheet-close" type="button" onClick={() => setClickedPosition(null)} aria-label="Stäng"><X size={18} /></button>
             <div className="place-title">
-              <span style={{ "--place-color": clickedPlace.free ? "#16a36f" : TARIFFS[clickedPlace.tariff!].color } as React.CSSProperties}>
+              <span style={{ "--place-color": placeColor(clickedPlace) } as React.CSSProperties}>
                 <MapPin size={23} />
               </span>
               <div>
-                <small>{clickedPlace.free ? "Avgiftsfritt område" : `Taxeområde ${clickedPlace.tariff}`}</small>
+                <small>Vald kartposition</small>
                 {clickedLoading ? (
                   <div className="loader-dots"><span></span><span></span><span></span></div>
                 ) : (
                   <h2>{clickedPlace.name}</h2>
                 )}
                 <p>{clickedPlace.address}</p>
-                <span className="place-tariff" style={{ background: clickedPlace.free ? "#16a36f" : TARIFFS[clickedPlace.tariff!].color }}>
-                  {clickedPlace.free ? "Gratis" : `Taxa ${clickedPlace.tariff}`}
+                <span className="place-tariff" style={{ background: placeColor(clickedPlace) }}>
+                  Pris ej verifierat
                 </span>
               </div>
             </div>
@@ -1429,21 +1992,19 @@ function App() {
               <div>
                 <small>Pris just nu</small>
                 <strong>
-                  {clickedPlace.free ? "Gratis" : getCurrentPrice(clickedPlace.tariff!).label}
+                  {clickedPlace.priceText}
                 </strong>
               </div>
               <div>
                 <small>Områdestaxa</small>
-                <strong>
-                  {clickedPlace.free ? "Gratis" : TARIFFS[clickedPlace.tariff!].price}
-                </strong>
+                <strong>Se skyltning</strong>
               </div>
               <div>
                 <small>Avstånd</small>
                 <strong>{formatDistance(distanceKm(focusPosition, [clickedPlace.lat, clickedPlace.lng]))}</strong>
               </div>
             </div>
-            <p className="place-note"><CircleAlert size={15} />{clickedPlace.free ? "Detta område har ingen ordinarie taxa enligt kartgränserna. Lokala villkor och P-skiva kan gälla." : TARIFFS[clickedPlace.tariff!].hours}</p>
+            <p className="place-note"><CircleAlert size={15} />{clickedPlace.note}</p>
             <div className="place-actions">
               <button type="button" className="primary-action" onClick={() => void buildRoute(clickedPlace)} disabled={routeLoading}>
                 {routeLoading ? <RefreshCw className="spin" size={18} /> : <Navigation size={18} />} Navigera hit
@@ -1474,8 +2035,13 @@ function App() {
         {routeInfo && (
           <motion.div className="route-banner" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
             <span><Route size={22} /></span>
-            <div><small>{routeInfo.fallback ? "Ungefärlig riktning" : "Snabbaste bilvägen"}</small><strong>{Math.max(1, Math.round(routeInfo.minutes))} min <i>·</i> {formatDistance(routeInfo.distance)}</strong><p>Till {routeInfo.destination.name}</p></div>
-            <button type="button" onClick={clearRoute}><X size={18} /></button>
+            <div>
+              <small>{routeInfo.arrived ? "Framme" : routeInfo.fallback ? "Ungefärlig riktning" : routeInfo.tracking ? "Körläge aktivt" : "Snabbaste bilvägen"}</small>
+              <strong>{routeInfo.arrived ? "Du är framme" : routeInfo.steps[routeInfo.currentStep]?.instruction ?? `${Math.max(1, Math.round(routeInfo.minutes))} min <i>·</i> ${formatDistance(routeInfo.distance)}`}</strong>
+              <p>{routeInfo.arrived ? routeInfo.destination.name : `${formatRouteDistance(routeInfo.remainingMeters)} kvar · Till ${routeInfo.destination.name}`}</p>
+              {!routeInfo.arrived && routeInfo.steps[routeInfo.currentStep + 1] ? <em>Nästa: {routeInfo.steps[routeInfo.currentStep + 1].instruction}</em> : null}
+            </div>
+            <button type="button" onClick={clearRoute} aria-label="Avsluta körläge"><X size={18} /></button>
           </motion.div>
         )}
       </AnimatePresence>
@@ -1518,6 +2084,50 @@ function App() {
           </motion.section>
         </motion.div>
       )}
+
+      <AnimatePresence>
+        {pwaInstallOpen && installPlatform && (
+          <motion.div
+            className="modal-backdrop pwa-install-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={dismissPwaInstall}
+          >
+            <motion.section
+              className="info-modal pwa-install-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="pwa-install-title"
+              initial={{ opacity: 0, y: 28, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 18, scale: 0.98 }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <span className="info-icon pwa-install-icon"><Download size={24} /></span>
+              <p className="pwa-install-eyebrow">PARKERA I STHLM</p>
+              <h2 id="pwa-install-title">Ha kartan nära till hands</h2>
+              {installPlatform === "android" ? (
+                <p>Installera Parkera i Sthlm på hemskärmen för snabb åtkomst till kartan, även när uppkopplingen är svag.</p>
+              ) : (
+                <>
+                  <p>Du kan lägga till Parkera i Sthlm på hemskärmen och öppna den som en vanlig app.</p>
+                  <ol className="pwa-install-steps">
+                    <li><span>1</span><div>Tryck på <strong>Dela</strong> i Safari.</div></li>
+                    <li><span>2</span><div>Välj <strong>Lägg till på hemskärmen</strong>.</div></li>
+                  </ol>
+                </>
+              )}
+              <div className="modal-actions pwa-install-actions">
+                <button ref={installActionRef} type="button" className="modal-action" onClick={() => void handlePwaInstall()}>
+                  <Download size={17} /> {installPlatform === "android" ? "Installera appen" : "Jag förstår"}
+                </button>
+                <button type="button" onClick={dismissPwaInstall}>Inte nu</button>
+              </div>
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {offlineProgress && (
         <motion.div className="toast" initial={{ opacity: 0, y: 18, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 14 }}>

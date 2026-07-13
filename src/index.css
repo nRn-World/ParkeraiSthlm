@@ -1176,6 +1176,7 @@ a:focus-visible {
   top: 17px;
   left: 50%;
   display: flex;
+  width: min(430px, calc(100vw - 36px));
   min-width: 295px;
   align-items: center;
   gap: 11px;
@@ -1202,8 +1203,10 @@ a:focus-visible {
 
 .route-banner strong {
   margin-top: 1px;
+  color: #173b74;
   font-size: 14px;
   font-weight: 820;
+  line-height: 1.2;
 }
 
 .route-banner strong i {
@@ -1215,6 +1218,17 @@ a:focus-visible {
   margin: 1px 0 0;
   color: #75838c;
   font-size: 9px;
+}
+
+.route-banner em {
+  overflow: hidden;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .route-banner > button {
@@ -1419,6 +1433,99 @@ a:focus-visible {
   background: #1266ee;
   color: #fff;
   box-shadow: 0 6px 15px rgba(18, 102, 238, 0.2);
+}
+
+@media (max-width: 640px) {
+  .route-banner {
+    top: 12px;
+    min-width: 0;
+    padding: 9px 10px;
+  }
+
+  .route-banner > span {
+    width: 36px;
+    height: 36px;
+  }
+
+  .route-banner strong {
+    font-size: 13px;
+  }
+}
+
+.pwa-install-backdrop {
+  z-index: 1400;
+  align-items: end;
+  padding: 14px;
+}
+
+.pwa-install-modal {
+  width: min(420px, 100%);
+  padding: 24px;
+  border-radius: 22px;
+}
+
+.pwa-install-icon {
+  color: #fff;
+  background: #1266ee;
+  box-shadow: 0 8px 20px rgba(18, 102, 238, 0.22);
+}
+
+.pwa-install-eyebrow {
+  margin: 16px 0 0;
+  color: #1266ee;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.pwa-install-modal h2 {
+  margin-top: 6px;
+}
+
+.pwa-install-steps {
+  display: grid;
+  gap: 9px;
+  margin: 17px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pwa-install-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  color: #52636e;
+  background: #f4f8fc;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.pwa-install-steps span {
+  display: grid;
+  width: 21px;
+  height: 21px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: #1266ee;
+  background: #dcecff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.pwa-install-steps strong {
+  color: #263b4b;
+}
+
+.pwa-install-actions {
+  margin-top: 20px;
+}
+
+.pwa-install-actions button:focus-visible {
+  outline: 3px solid rgba(18, 102, 238, 0.35);
+  outline-offset: 2px;
 }
 
 @keyframes brand-breathe {
@@ -2292,6 +2399,20 @@ a:focus-visible {
 
 .dark .modal-action:hover {
   background: #0369a1;
+}
+
+.dark .pwa-install-steps li {
+  color: #cbd5e1;
+  background: #1e293b;
+}
+
+.dark .pwa-install-steps span {
+  color: #7dd3fc;
+  background: #0c4a6e;
+}
+
+.dark .pwa-install-steps strong {
+  color: #f8fafc;
 }
 
 .dark .toast {
