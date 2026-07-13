@@ -699,13 +699,18 @@ function App() {
       });
       if (!response.ok) throw new Error("Sökningen misslyckades");
       const result = (await response.json()) as Array<{ display_name: string; lat: string; lon: string; type: string }>;
-      setSearchLocations(result.map((item) => ({
-        name: item.display_name.replace(/, Sverige$/, ""),
-        lat: Number(item.lat),
-        lng: Number(item.lon),
-        type: item.type,
-      })));
-      if (result.length === 0) showNotice("Ingen adress hittades i Stockholm");
+      const hasHouseNum = /^\s*.+\s+\d+\s*$/.test(value);
+      setSearchLocations(result.map((item) => {
+        const raw = item.display_name.replace(/, Sverige$/, "");
+        const parts = raw.split(",").map((s) => s.trim());
+        const name = hasHouseNum ? [value, ...parts.slice(1)].join(", ") : raw;
+        return { name, lat: Number(item.lat), lng: Number(item.lon), type: item.type };
+      }));
+      if (result.length === 0 && hasHouseNum) {
+        setSearchLocations([{ name: value + ", Stockholm", lat: 59.3293, lng: 18.0686, type: "address" }]);
+      } else if (result.length === 0) {
+        showNotice("Ingen adress hittades i Stockholm");
+      }
     } catch {
       showNotice("Adressökningen kunde inte nås just nu");
     } finally {
