@@ -16,7 +16,8 @@ export type ParkingPlace = {
   note: string;
   spaces?: number;
   disabledSpaces?: number;
-  source: "local" | "osm";
+  evSpaces?: number;
+  source: "local" | "osm" | "api";
 };
 
 export type TaxArea = {

@@ -29,6 +29,7 @@ import {
   Wifi,
   WifiOff,
   X,
+  Zap,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -46,11 +47,12 @@ import {
   type TariffId,
 } from "./data";
 
-type Category = "all" | "free" | "garage" | "street" | "disabled" | TariffId;
+type Category = "all" | "free" | "garage" | "street" | "disabled" | "ev" | TariffId;
 type RouteInfo = { distance: number; minutes: number; fallback: boolean; destination: ParkingPlace };
 type SearchLocation = { name: string; lat: number; lng: number; type: string };
 
 const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
+const STHLM_PARK_API = "https://api.stockholmparkering.se:8084/SparkInfartsParkeringService.svc";
 
 function normalize(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
@@ -148,12 +150,66 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
   });
 }
 
+type ApiFacility = {
+  Name?: string;
+  Adress?: string;
+  AdressLatitud?: number;
+  AdressLongitud?: number;
+  Anlaggningstyp?: string;
+  AntalBesokPlatser?: number;
+  AntalBesokPlatserRorelsehindrad?: number;
+  AntalLaddplatserBesokBil?: number;
+  AntalLaddplatserBesokMc?: number;
+  Omrade?: string;
+  BesokstaxaCollection?: Array<{ Galler?: string; Taxa?: number; Tidsenhet?: string; ParkeringsTypNamn?: string }>;
+};
+
+function parseApiParking(payload: unknown): ParkingPlace[] {
+  if (!Array.isArray(payload)) return [];
+  return (payload as ApiFacility[]).flatMap((f): ParkingPlace[] => {
+    if (!f.AdressLatitud || !f.AdressLongitud || !f.Name) return [];
+    const lat = Number(f.AdressLatitud);
+    const lng = Number(f.AdressLongitud);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+
+    const totalSpots = f.AntalBesokPlatser ?? 0;
+    const kind = f.Anlaggningstyp === "Garage" ? "garage" : "surface";
+    const hasSpots = totalSpots > 0;
+
+    const tax = f.BesokstaxaCollection?.find((t) => t.Taxa != null);
+    const priceText = tax ? `${tax.Taxa} kr/${tax.Tidsenhet?.toLowerCase() ?? "timme"}` : "Infartsparkering";
+
+    return [{
+      id: `api-${f.Name.replace(/\s+/g, "-")}`,
+      name: f.Name,
+      address: f.Adress || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      area: f.Omrade || "Stockholm",
+      lat,
+      lng,
+      kind,
+      tariff: null,
+      free: !tax && hasSpots,
+      priceText,
+      note: !hasSpots
+        ? "Infartsparkering enligt Stockholms stads register."
+        : tax
+          ? `Taxa: ${tax.Galler ?? "Se skyltning"}. ${tax.Taxa} kr/${tax.Tidsenhet?.toLowerCase() ?? "tim"}.`
+          : "Avgiftsfri infartsparkering enligt Stockholms stads register.",
+      spaces: totalSpots > 0 ? totalSpots : undefined,
+      disabledSpaces: (f.AntalBesokPlatserRorelsehindrad ?? 0) > 0 ? f.AntalBesokPlatserRorelsehindrad : undefined,
+      evSpaces: (f.AntalLaddplatserBesokBil ?? 0) > 0 ? f.AntalLaddplatserBesokBil : undefined,
+      source: "api",
+    }];
+  });
+}
+
 function categoryLabel(category: Category) {
   if (typeof category === "number") return `Taxa ${category}`;
   if (category === "garage") return "Garage";
   if (category === "street") return "Gatuparkering";
   if (category === "free") return "Gratis";
   if (category === "disabled") return "Handikapp";
+  if (category === "ev") return "Elbil";
   return "Alla parkeringar";
 }
 
@@ -242,7 +298,7 @@ function App() {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
         if (cached.version !== CACHE_VERSION) throw new Error("cache-version-mismatch");
-        if (Array.isArray(cached.places)) setAllParking([...LOCAL_PARKING, ...cached.places]);
+        if (Array.isArray(cached.places)) setAllParking((prev) => [...LOCAL_PARKING, ...cached.places, ...prev.filter((p) => p.source === "api")]);
         if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
       } catch {
         localStorage.removeItem("parksthlm-osm");
@@ -257,7 +313,7 @@ function App() {
       if (!response.ok) throw new Error("Kunde inte hämta parkeringsdata");
       const places = parseOsmParking(await response.json()).slice(0, 280);
       localStorage.setItem("parksthlm-osm", JSON.stringify({ timestamp: Date.now(), version: 2, places }));
-      setAllParking([...LOCAL_PARKING, ...places]);
+      setAllParking((prev) => [...LOCAL_PARKING, ...places, ...prev.filter((p) => p.source === "api")]);
       if (force) showNotice(`${places.length} parkeringsplatser uppdaterades`);
     } catch {
       if (force) showNotice("Live-data kunde inte nås. Sparad data används.");
@@ -266,14 +322,43 @@ function App() {
     }
   }, [showNotice]);
 
+  const fetchApiParking = useCallback(async (force = false) => {
+    const CACHE_KEY = "parksthlm-api";
+    const cachedRaw = localStorage.getItem(CACHE_KEY);
+    if (cachedRaw && !force) {
+      try {
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+        if (cached.version !== 1) throw new Error("cache-version");
+        if (Array.isArray(cached.places)) setAllParking((prev) => [...prev.filter((p) => p.source !== "api"), ...cached.places]);
+        if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
+      } catch {
+        localStorage.removeItem(CACHE_KEY);
+      }
+    }
+    if (!navigator.onLine) return;
+    try {
+      const url = STHLM_PARK_API + "/GetAllAnlaggningParkeringsInfo";
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Kunde inte hämta infartsparkeringar");
+      const places = parseApiParking(await response.json());
+      localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+      setAllParking((prev) => [...prev.filter((p) => p.source !== "api"), ...places]);
+      if (force) showNotice(places.length + " infartsparkeringar uppdaterades");
+    } catch {
+      if (force) showNotice("Infartsparkeringar kunde inte nås. Sparad data används.");
+    }
+  }, [showNotice]);
+
   useEffect(() => {
     void fetchOsmParking();
-  }, [fetchOsmParking]);
+    void fetchApiParking();
+  }, [fetchOsmParking, fetchApiParking]);
 
   useEffect(() => {
     const handleOnline = () => {
       setOnline(true);
       void fetchOsmParking();
+      void fetchApiParking();
     };
     const handleOffline = () => setOnline(false);
     window.addEventListener("online", handleOnline);
@@ -465,6 +550,7 @@ function App() {
     if (category === "garage") return place.kind === "garage";
     if (category === "street") return place.kind === "street" || place.kind === "surface";
     if (category === "disabled") return (place.disabledSpaces ?? 0) > 0;
+    if (category === "ev") return (place.evSpaces ?? 0) > 0;
     return place.tariff === category;
   }, [category]);
 
@@ -544,6 +630,11 @@ function App() {
     }
     if (["handikapp", "handikapparkering", "disabled", "rörelsehindrad"].includes(normalize(value))) {
       selectCategory("disabled");
+      setQuery("");
+      return;
+    }
+    if (["elbil", "laddplats", "el", "ladda", "ev"].includes(normalize(value))) {
+      selectCategory("ev");
       setQuery("");
       return;
     }
@@ -796,6 +887,7 @@ function App() {
           <button className={category === "garage" ? "active" : ""} onClick={() => selectCategory("garage")} type="button"><Warehouse size={15} /> Garage</button>
           <button className={category === "free" ? "active" : ""} onClick={() => selectCategory("free")} type="button">Gratis</button>
           <button className={category === "disabled" ? "active" : ""} onClick={() => selectCategory("disabled")} type="button">Handikapp</button>
+          <button className={category === "ev" ? "active" : ""} onClick={() => selectCategory("ev")} type="button">Elbil</button>
           <button className="filter-button" onClick={() => setFiltersOpen((open) => !open)} type="button" aria-expanded={filtersOpen}>
             <SlidersHorizontal size={15} /> Taxor <ChevronDown size={14} />
           </button>
@@ -858,6 +950,10 @@ function App() {
               <button type="button" onClick={() => { selectCategory("disabled"); setSearchFocused(false); }} className="suggestion-item">
                 <ParkingCircle size={16} className="text-blue" />
                 <span>Handikapparkering</span>
+              </button>
+              <button type="button" onClick={() => { selectCategory("ev"); setSearchFocused(false); }} className="suggestion-item">
+                <Zap size={16} className="text-blue" />
+                <span>Laddplatser (elbil)</span>
               </button>
               
               <div className="suggestions-header">Sök efter taxa</div>
@@ -999,6 +1095,7 @@ function App() {
               <div><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
               {(selectedParking.disabledSpaces ?? 0) > 0 ? <div><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
+              {(selectedParking.evSpaces ?? 0) > 0 ? <div><small>Elladdning</small><strong>{selectedParking.evSpaces} plats{selectedParking.evSpaces !== 1 ? "er" : ""}</strong></div> : null}
             </div>
             <p className="place-note"><CircleAlert size={15} />{selectedParking.free ? "Detta område har ingen ordinarie taxa enligt kartgränserna. Lokala villkor och P-skiva kan gälla." : selectedParking.tariff ? TARIFFS[selectedParking.tariff].hours : selectedParking.note}</p>
             <div className="place-actions">
