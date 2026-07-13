@@ -362,10 +362,10 @@ function App() {
     }
   }, [showNotice]);
 
-  const fetchDisabledOsmParking = useCallback(async () => {
+  const fetchDisabledParking = useCallback(async () => {
     if (!navigator.onLine) return;
-    const cacheKey = "parksthlm-disabled";
-    const cachedRaw = localStorage.getItem(cacheKey);
+    const key = "parksthlm-disabled";
+    const cachedRaw = localStorage.getItem(key);
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
@@ -376,15 +376,14 @@ function App() {
           });
           if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
         }
-      } catch { localStorage.removeItem(cacheKey); }
+      } catch { localStorage.removeItem(key); }
     }
     try {
-      const q = "[out:json][timeout:50];area[\"name\"=\"Stockholm\"][\"admin_level\"=\"7\"]->.s;(nwr[\"amenity\"=\"parking_space\"][\"disabled\"=\"yes\"](area.s);nwr[\"amenity\"=\"parking\"][\"capacity:disabled\"](area.s);nwr[\"amenity\"=\"parking\"][\"disabled:capacity\"](area.s);nwr[\"amenity\"=\"parking\"][\"disabled\"](area.s);nwr[\"amenity\"=\"charging_station\"](area.s););out center tags(2000);";
+      const q = "[out:json][timeout:55];area[\"name\"=\"Stockholm\"][\"admin_level\"=\"7\"]->.s;(nwr[\"amenity\"=\"parking_space\"][\"disabled\"=\"yes\"](area.s);nwr[\"amenity\"=\"parking\"][\"capacity:disabled\"](area.s);nwr[\"amenity\"=\"parking\"][\"disabled:capacity\"](area.s);nwr[\"amenity\"=\"parking\"][\"disabled\"](area.s);nwr[\"amenity\"=\"parking\"][~\"^.*disabled.*$\"~\".\"](area.s););out center tags(3000);";
       const res = await fetch(OVERPASS_ENDPOINT + "?data=" + encodeURIComponent(q));
       if (!res.ok) return;
-      const raw = await res.json();
-      const places = parseOsmParking(raw).slice(0, 2000);
-      localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
+      const places = parseOsmParking(await res.json()).filter((p) => (p.disabledSpaces ?? 0) > 0).slice(0, 3000);
+      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
       setAllParking((prev) => {
         const existingIds = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
         return [...prev.filter((p) => p.source !== "osm-disabled"), ...places.filter((p) => !existingIds.has(p.id))];
@@ -392,18 +391,49 @@ function App() {
     } catch { /* silent */ }
   }, []);
 
+  const fetchEvCharging = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const key = "parksthlm-ev";
+    const cachedRaw = localStorage.getItem(key);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+        if (cached.version === 1 && Array.isArray(cached.places)) {
+          setAllParking((prev) => {
+            const existingIds = new Set(prev.filter((p) => p.source !== "osm-ev").map((p) => p.id));
+            return [...prev.filter((p) => p.source !== "osm-ev"), ...cached.places.filter((p) => !existingIds.has(p.id))];
+          });
+          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
+        }
+      } catch { localStorage.removeItem(key); }
+    }
+    try {
+      const q = "[out:json][timeout:55];area[\"name\"=\"Stockholm\"][\"admin_level\"=\"7\"]->.s;nwr[\"amenity\"=\"charging_station\"](area.s);out center tags(3000);";
+      const res = await fetch(OVERPASS_ENDPOINT + "?data=" + encodeURIComponent(q));
+      if (!res.ok) return;
+      const places = parseOsmParking(await res.json()).filter((p) => (p.evSpaces ?? 0) > 0).slice(0, 3000);
+      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+      setAllParking((prev) => {
+        const existingIds = new Set(prev.filter((p) => p.source !== "osm-ev").map((p) => p.id));
+        return [...prev.filter((p) => p.source !== "osm-ev"), ...places.filter((p) => !existingIds.has(p.id))];
+      });
+    } catch { /* silent */ }
+  }, []);
+
   useEffect(() => {
     void fetchOsmParking();
     void fetchApiParking();
-    void fetchDisabledOsmParking();
-  }, [fetchOsmParking, fetchApiParking, fetchDisabledOsmParking]);
+    void fetchDisabledParking();
+    void fetchEvCharging();
+  }, [fetchOsmParking, fetchApiParking, fetchDisabledParking, fetchEvCharging]);
 
   useEffect(() => {
     const handleOnline = () => {
       setOnline(true);
       void fetchOsmParking();
       void fetchApiParking();
-      void fetchDisabledOsmParking();
+      void fetchDisabledParking();
+      void fetchEvCharging();
     };
     const handleOffline = () => setOnline(false);
     window.addEventListener("online", handleOnline);
