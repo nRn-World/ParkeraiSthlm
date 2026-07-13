@@ -349,16 +349,47 @@ function App() {
     }
   }, [showNotice]);
 
+  const fetchDisabledOsmParking = useCallback(async () => {
+    if (!navigator.onLine) return;
+    const cachedRaw = localStorage.getItem("parksthlm-disabled");
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+        if (cached.version === 1 && Array.isArray(cached.places)) {
+          setAllParking((prev) => {
+            const existing = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
+            const merged = prev.filter((p) => p.source !== "osm-disabled");
+            return [...merged, ...cached.places.filter((p) => !existing.has(p.id))];
+          });
+          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
+        }
+      } catch { localStorage.removeItem("parksthlm-disabled"); }
+    }
+    try {
+      const q = "[out:json][timeout:35];(nwr[\"amenity\"=\"parking_space\"][\"disabled\"=\"yes\"](around:15000,59.3293,18.0686);nwr[\"amenity\"=\"parking\"][\"capacity:disabled\"](around:15000,59.3293,18.0686););out center tags;";
+      const res = await fetch(OVERPASS_ENDPOINT + "?data=" + encodeURIComponent(q));
+      if (!res.ok) return;
+      const places = parseOsmParking(await res.json()).slice(0, 500);
+      localStorage.setItem("parksthlm-disabled", JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+      setAllParking((prev) => {
+        const existing = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
+        return [...prev.filter((p) => p.source !== "osm-disabled"), ...places.filter((p) => !existing.has(p.id))];
+      });
+    } catch { /* silent */ }
+  }, []);
+
   useEffect(() => {
     void fetchOsmParking();
     void fetchApiParking();
-  }, [fetchOsmParking, fetchApiParking]);
+    void fetchDisabledOsmParking();
+  }, [fetchOsmParking, fetchApiParking, fetchDisabledOsmParking]);
 
   useEffect(() => {
     const handleOnline = () => {
       setOnline(true);
       void fetchOsmParking();
       void fetchApiParking();
+      void fetchDisabledOsmParking();
     };
     const handleOffline = () => setOnline(false);
     window.addEventListener("online", handleOnline);
@@ -574,7 +605,7 @@ function App() {
     layer.clearLayers();
     const markerPlaces = mapZoom < 14
       ? filteredParking.filter((place) => place.source === "local" || place.kind === "garage" || (place.disabledSpaces ?? 0) > 0).slice(0, 100)
-      : filteredParking.slice(0, 220);
+      : filteredParking.slice(0, 350);
     markerPlaces.forEach((place) => {
       L.marker([place.lat, place.lng], {
         pane: "parking",
