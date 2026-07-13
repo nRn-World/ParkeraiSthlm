@@ -157,6 +157,7 @@ function App() {
   const routeLayerRef = useRef<LayerGroup | null>(null);
   const clickLayerRef = useRef<LayerGroup | null>(null);
   const lastGeocodeRef = useRef(0);
+  const deferredPromptRef = useRef<any>(null);
 
   const [allParking, setAllParking] = useState<ParkingPlace[]>(LOCAL_PARKING);
   const [category, setCategory] = useState<Category>("all");
@@ -179,6 +180,8 @@ function App() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [offlineReady, setOfflineReady] = useState(localStorage.getItem("parksthlm-offline-ready") === "true");
   const [notice, setNotice] = useState<string | null>(null);
+  const [canInstall, setCanInstall] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
 
   // Nya states för Dark Mode, Kartklick och Sökförslag
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("parksthlm-dark") === "true");
@@ -271,7 +274,31 @@ function App() {
 
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    navigator.serviceWorker.register("sw.js").catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const isStandaloneMode = window.matchMedia('(display-mode: standalone)').matches || 
+                          (window.navigator as any).standalone === true;
+    setIsStandalone(isStandaloneMode);
+
+    // Check if inline script already captured the event before React mounted
+    if ((window as any).__ipp) {
+      deferredPromptRef.current = (window as any).__ipp;
+      setCanInstall(true);
+    }
+
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      deferredPromptRef.current = e;
+      setCanInstall(true);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    };
   }, []);
 
   useEffect(() => {
@@ -635,15 +662,26 @@ function App() {
   };
 
   const saveOffline = async () => {
-    localStorage.setItem("parksthlm-offline-ready", "true");
-    setOfflineReady(true);
-    try {
-      const registration = await navigator.serviceWorker?.ready;
-      registration?.active?.postMessage({ type: "CACHE_APP" });
-    } catch {
-      // Local map and parking data are already bundled in the application.
+    if (deferredPromptRef.current) {
+      deferredPromptRef.current.prompt();
+      const { outcome } = await deferredPromptRef.current.userChoice;
+      if (outcome === "accepted") {
+        showNotice("Appen installerad!");
+      }
+      deferredPromptRef.current = null;
+      setCanInstall(false);
+    } else {
+      // Fallback if install prompt isn't available: save offline
+      localStorage.setItem("parksthlm-offline-ready", "true");
+      setOfflineReady(true);
+      try {
+        const registration = await navigator.serviceWorker?.ready;
+        registration?.active?.postMessage({ type: "CACHE_APP" });
+      } catch {
+        // Local map and parking data are already bundled in the application.
+      }
+      showNotice("Offline-läge klart. Besökta kartvyer sparas automatiskt.");
     }
-    showNotice("Offline-läge klart. Besökta kartvyer sparas automatiskt.");
   };
 
   const showParking = (place: ParkingPlace) => {
@@ -849,8 +887,8 @@ function App() {
         <button type="button" onClick={() => setPanelOpen((open) => !open)} className="list-button">
           <ListFilter size={18} /> <span>{panelOpen ? "Dölj lista" : "Visa parkeringar"}</span>
         </button>
-        <button type="button" onClick={saveOffline} className={offlineReady ? "offline-saved" : ""}>
-          <Download size={17} /> <span>{offlineReady ? "Offline redo" : "Spara offline"}</span>
+        <button type="button" onClick={saveOffline} className={canInstall ? "install-prompt-button" : offlineReady ? "offline-saved" : ""}>
+          <Download size={17} /> <span>{isStandalone ? "Appen installerad" : canInstall ? "Ladda ner appen" : offlineReady ? "Offline redo" : "Spara offline"}</span>
         </button>
         <button type="button" onClick={() => setInfoOpen(true)} aria-label="Information"><Info size={18} /></button>
       </div>

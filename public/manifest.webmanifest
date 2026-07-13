@@ -1,19 +1,29 @@
 {
-  "name": "Park Stockholm - taxekarta",
+  "name": "Park Stockholm",
   "short_name": "Park Stockholm",
-  "description": "Hitta taxeområden, gatuparkering, garage och gratis parkering i Stockholm.",
+  "id": "/ParkeraiSthlm/",
+  "description": "Hitta parkering, taxeomr\u00e5den och gatuparkeringsregler i Stockholm.",
   "lang": "sv-SE",
-  "start_url": "/",
+  "start_url": "/ParkeraiSthlm/",
+  "scope": "/ParkeraiSthlm/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#e8efed",
+  "background_color": "#1266ee",
   "theme_color": "#1266ee",
+  "categories": ["navigation", "travel", "utilities"],
   "icons": [
-    {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
-    }
+    { "src": "/ParkeraiSthlm/icon-48.png", "sizes": "48x48", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-72.png", "sizes": "72x72", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-96.png", "sizes": "96x96", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-128.png", "sizes": "128x128", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-144.png", "sizes": "144x144", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-152.png", "sizes": "152x152", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-168.png", "sizes": "168x168", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/ParkeraiSthlm/icon-384.png", "sizes": "384x384", "type": "image/png" },
+    { "src": "/ParkeraiSthlm/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/ParkeraiSthlm/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/ParkeraiSthlm/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

@@ -737,6 +737,28 @@ a:focus-visible {
   color: #137b58;
 }
 
+/* Make install button extra prominent on mobile */
+@media (max-width: 860px) {
+  .map-top-actions .install-prompt-button {
+    background: #1266ee !important;
+    color: white !important;
+    border-color: #1266ee !important;
+    box-shadow: 0 6px 20px rgba(18, 102, 238, 0.35);
+    animation: pulse-install 2s infinite ease-in-out;
+  }
+}
+
+@keyframes pulse-install {
+  0%, 100% {
+    transform: translateY(0);
+    box-shadow: 0 6px 20px rgba(18, 102, 238, 0.35);
+  }
+  50% {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(18, 102, 238, 0.5);
+  }
+}
+
 .map-controls {
   position: absolute;
   z-index: 800;
