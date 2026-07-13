@@ -114,6 +114,7 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
 
     const isDisabledSpace = tags.amenity === "parking_space" && tags.disabled === "yes";
+    const isChargingStation = tags.amenity === "charging_station";
 
     const parkingTag = tags.parking || "surface";
     const kind = ["underground", "multi-storey", "garage", "sheds"].includes(parkingTag) || tags.building === "parking"
@@ -123,9 +124,18 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
         : "surface";
     const free = tags.fee === "no";
     const tariff = free ? null : tariffAt([lat, lng]);
-    const name = isDisabledSpace ? "Handikapparkering" : tags.name || tags.operator || (kind === "garage" ? "Parkeringsgarage" : "Parkering");
+    const name = isDisabledSpace ? "Handikapparkering" : isChargingStation ? (tags.name || tags.operator || "Laddstation") : tags.name || tags.operator || (kind === "garage" ? "Parkeringsgarage" : "Parkering");
     const streetAddress = [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" ");
-    const disabledSpaces = isDisabledSpace ? 1 : Number.isFinite(Number(tags["capacity:disabled"])) ? Number(tags["capacity:disabled"]) : undefined;
+    const disabledSpacesVal = (() => {
+      if (isDisabledSpace) return 1;
+      const capDisabled = Number(tags["capacity:disabled"]);
+      if (Number.isFinite(capDisabled)) return capDisabled;
+      const disabledCap = Number(tags["disabled:capacity"]);
+      if (Number.isFinite(disabledCap)) return disabledCap;
+      if (tags.disabled === "yes" || tags.disabled === "designated") return 1;
+      return undefined;
+    })();
+    const evSpacesVal = isChargingStation ? (Number.isFinite(Number(tags.capacity)) ? Number(tags.capacity) : 1) : Number.isFinite(Number(tags["capacity:charging"])) ? Number(tags["capacity:charging"]) : undefined;
 
     return [{
       id: `osm-${String(element.type)}-${String(element.id)}`,
@@ -134,17 +144,20 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       area: tags["addr:suburb"] || tags["addr:city"] || "Stockholm",
       lat,
       lng,
-      kind,
+      kind: isChargingStation ? "surface" : kind,
       tariff,
       free,
       priceText: free ? "Gratis enligt OSM" : tags.charge || (tags.fee === "yes" ? "Avgift" : "Villkor okända"),
       note: isDisabledSpace
         ? "Handikapparkering. Gällande regler skyltas på plats."
-        : free
-          ? "Markerad som avgiftsfri i OpenStreetMap. Kontrollera skyltningen på plats."
-          : "Parkeringsplats från OpenStreetMap. Aktuella villkor står vid infarten eller på gatuskylten.",
+        : isChargingStation
+          ? "Laddstation för elbil enligt OpenStreetMap."
+          : free
+            ? "Markerad som avgiftsfri i OpenStreetMap. Kontrollera skyltningen på plats."
+            : "Parkeringsplats från OpenStreetMap. Aktuella villkor står vid infarten eller på gatuskylten.",
       spaces: Number.isFinite(Number(tags.capacity)) ? Number(tags.capacity) : undefined,
-      disabledSpaces,
+      disabledSpaces: disabledSpacesVal,
+      evSpaces: evSpacesVal,
       source: "osm",
     }];
   });
@@ -351,29 +364,30 @@ function App() {
 
   const fetchDisabledOsmParking = useCallback(async () => {
     if (!navigator.onLine) return;
-    const cachedRaw = localStorage.getItem("parksthlm-disabled");
+    const cacheKey = "parksthlm-disabled";
+    const cachedRaw = localStorage.getItem(cacheKey);
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 1 && Array.isArray(cached.places)) {
+        if (cached.version === 2 && Array.isArray(cached.places)) {
           setAllParking((prev) => {
-            const existing = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
-            const merged = prev.filter((p) => p.source !== "osm-disabled");
-            return [...merged, ...cached.places.filter((p) => !existing.has(p.id))];
+            const existingIds = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
+            return [...prev.filter((p) => p.source !== "osm-disabled"), ...cached.places.filter((p) => !existingIds.has(p.id))];
           });
           if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
         }
-      } catch { localStorage.removeItem("parksthlm-disabled"); }
+      } catch { localStorage.removeItem(cacheKey); }
     }
     try {
-      const q = "[out:json][timeout:35];(nwr[\"amenity\"=\"parking_space\"][\"disabled\"=\"yes\"](around:15000,59.3293,18.0686);nwr[\"amenity\"=\"parking\"][\"capacity:disabled\"](around:15000,59.3293,18.0686););out center tags;";
+      const q = "[out:json][timeout:50];area[\"name\"=\"Stockholm\"][\"admin_level\"=\"7\"]->.s;(nwr[\"amenity\"=\"parking_space\"][\"disabled\"=\"yes\"](area.s);nwr[\"amenity\"=\"parking\"][\"capacity:disabled\"](area.s);nwr[\"amenity\"=\"parking\"][\"disabled:capacity\"](area.s);nwr[\"amenity\"=\"parking\"][\"disabled\"](area.s);nwr[\"amenity\"=\"charging_station\"](area.s););out center tags(2000);";
       const res = await fetch(OVERPASS_ENDPOINT + "?data=" + encodeURIComponent(q));
       if (!res.ok) return;
-      const places = parseOsmParking(await res.json()).slice(0, 500);
-      localStorage.setItem("parksthlm-disabled", JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+      const raw = await res.json();
+      const places = parseOsmParking(raw).slice(0, 2000);
+      localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
       setAllParking((prev) => {
-        const existing = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
-        return [...prev.filter((p) => p.source !== "osm-disabled"), ...places.filter((p) => !existing.has(p.id))];
+        const existingIds = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
+        return [...prev.filter((p) => p.source !== "osm-disabled"), ...places.filter((p) => !existingIds.has(p.id))];
       });
     } catch { /* silent */ }
   }, []);
@@ -604,8 +618,8 @@ function App() {
     if (!layer) return;
     layer.clearLayers();
     const markerPlaces = mapZoom < 14
-      ? filteredParking.filter((place) => place.source === "local" || place.kind === "garage" || (place.disabledSpaces ?? 0) > 0).slice(0, 100)
-      : filteredParking.slice(0, 350);
+      ? filteredParking.filter((place) => place.source === "local" || place.kind === "garage" || (place.disabledSpaces ?? 0) > 0 || (place.evSpaces ?? 0) > 0).slice(0, 120)
+      : filteredParking.slice(0, 500);
     markerPlaces.forEach((place) => {
       L.marker([place.lat, place.lng], {
         pane: "parking",
@@ -878,7 +892,7 @@ function App() {
     mapRef.current?.flyTo([place.lat, place.lng], Math.max(mapRef.current.getZoom(), 15), { duration: 0.8 });
   };
 
-  const visibleResults = searchMatches.slice(0, query ? 18 : 10);
+  const visibleResults = searchMatches.slice(0, query ? 30 : 20);
 
   return (
     <main className={`app-shell ${online ? "is-online" : "is-offline"}`}>
