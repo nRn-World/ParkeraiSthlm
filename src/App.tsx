@@ -50,7 +50,19 @@ import {
 } from "./data";
 
 type Category = "all" | "free" | "garage" | "street" | "disabled" | "ev" | "mc" | TariffId;
-type RouteInfo = { distance: number; minutes: number; fallback: boolean; destination: ParkingPlace };
+type NavigationStep = { instruction: string; distance: number; location: LatLng };
+type RouteInfo = {
+  distance: number;
+  minutes: number;
+  fallback: boolean;
+  destination: ParkingPlace;
+  positions: LatLng[];
+  steps: NavigationStep[];
+  currentStep: number;
+  remainingMeters: number;
+  tracking: boolean;
+  arrived: boolean;
+};
 type SearchLocation = { name: string; lat: number; lng: number; type: string };
 type InstallPlatform = "android" | "ios";
 type BeforeInstallPromptEvent = Event & {
@@ -151,6 +163,40 @@ function userIcon() {
 function formatDistance(km: number) {
   if (km < 1) return `${Math.max(20, Math.round((km * 1000) / 10) * 10)} m`;
   return `${km.toFixed(1).replace(".", ",")} km`;
+}
+
+function formatRouteDistance(meters: number) {
+  return meters < 1000 ? `${Math.max(10, Math.round(meters / 10) * 10)} m` : `${(meters / 1000).toFixed(1).replace(".", ",")} km`;
+}
+
+function navigationInstruction(type?: string, modifier?: string, name?: string, exit?: number) {
+  const road = name ? ` på ${name}` : "";
+  const direction = modifier === "left" ? "vänster" : modifier === "right" ? "höger" : modifier === "slight left" ? "svagt vänster" : modifier === "slight right" ? "svagt höger" : modifier === "sharp left" ? "skarpt vänster" : modifier === "sharp right" ? "skarpt höger" : "rakt fram";
+  if (type === "depart") return name ? `Kör ut på ${name}` : "Starta körningen";
+  if (type === "arrive") return "Du är framme vid parkeringen";
+  if (type === "roundabout" || type === "rotary") return exit ? `Ta avfart ${exit} i rondellen${road}` : `Kör in i rondellen${road}`;
+  if (type === "merge") return `Foga in${road}`;
+  if (type === "fork") return `Håll ${direction}${road}`;
+  if (type === "continue" || type === "new name") return name ? `Fortsätt på ${name}` : "Fortsätt rakt fram";
+  if (type === "turn" || type === "end") return `Sväng ${direction}${road}`;
+  return name ? `Fortsätt på ${name}` : "Fortsätt på vägen";
+}
+
+function routeProgress(position: LatLng, positions: LatLng[]) {
+  let nearestIndex = 0;
+  let nearestMeters = Number.POSITIVE_INFINITY;
+  positions.forEach((routePosition, index) => {
+    const meters = distanceKm(position, routePosition) * 1000;
+    if (meters < nearestMeters) {
+      nearestMeters = meters;
+      nearestIndex = index;
+    }
+  });
+  let remainingMeters = nearestMeters;
+  for (let index = nearestIndex; index < positions.length - 1; index += 1) {
+    remainingMeters += distanceKm(positions[index], positions[index + 1]) * 1000;
+  }
+  return { nearestMeters, remainingMeters };
 }
 
 const OSM_SOCKET_NAMES: Record<string, string> = {
@@ -604,6 +650,8 @@ function App() {
   const lastGeocodeRef = useRef(0);
   const lastMcFitCountRef = useRef(0);
   const officialRuleParkingRef = useRef<Partial<Record<OfficialRule, ParkingPlace[]>>>({});
+  const routeInfoRef = useRef<RouteInfo | null>(null);
+  const lastRerouteRef = useRef(0);
   const deferredPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const installActionRef = useRef<HTMLButtonElement>(null);
 
@@ -641,6 +689,10 @@ function App() {
   const [clickedAddress, setClickedAddress] = useState<string | null>(null);
   const [clickedLoading, setClickedLoading] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
+
+  useEffect(() => {
+    routeInfoRef.current = routeInfo;
+  }, [routeInfo]);
 
   // Synka Dark Mode i DOM:en
   useEffect(() => {
@@ -1365,6 +1417,25 @@ function App() {
     showNotice("Visar parkeringar närmast den valda platsen");
   };
 
+  const updateUserLocation = useCallback((next: LatLng, accuracy: number, followRoute = false) => {
+    setUserPosition(next);
+    setSearchPosition(null);
+    const layer = locationLayerRef.current;
+    layer?.clearLayers();
+    if (layer) {
+      L.circle(next, {
+        pane: "parking",
+        radius: Math.min(accuracy, 220),
+        color: "#3478f6",
+        fillColor: "#3478f6",
+        fillOpacity: 0.08,
+        weight: 1,
+      }).addTo(layer);
+      L.marker(next, { pane: "parking", icon: userIcon(), title: "Din position" }).addTo(layer);
+    }
+    if (followRoute) mapRef.current?.panTo(next, { animate: true, duration: 0.45 });
+  }, []);
+
   const locateUser = () => {
     if (!navigator.geolocation) {
       showNotice("Din webbläsare saknar stöd för GPS");
@@ -1374,23 +1445,9 @@ function App() {
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const next: LatLng = [position.coords.latitude, position.coords.longitude];
-        setUserPosition(next);
-        setSearchPosition(null);
+        updateUserLocation(next, position.coords.accuracy);
         setClickedPosition(null);
         setLocating(false);
-        const layer = locationLayerRef.current;
-        layer?.clearLayers();
-        if (layer) {
-          L.circle(next, {
-            pane: "parking",
-            radius: Math.min(position.coords.accuracy, 220),
-            color: "#3478f6",
-            fillColor: "#3478f6",
-            fillOpacity: 0.08,
-            weight: 1,
-          }).addTo(layer);
-          L.marker(next, { pane: "parking", icon: userIcon(), title: "Din position" }).addTo(layer);
-        }
         mapRef.current?.flyTo(next, 16, { duration: 1.2 });
         showNotice("GPS-position hittad");
       },
@@ -1402,33 +1459,45 @@ function App() {
     );
   };
 
-  const buildRoute = async (destination: ParkingPlace) => {
-    const start = userPosition || viewCenter;
-    if (!userPosition) showNotice("Rutten startar från kartans mitt. Aktivera GPS för din exakta position.");
+  const calculateRoute = useCallback(async (destination: ParkingPlace, start: LatLng, tracking: boolean) => {
     setRouteLoading(true);
     routeLayerRef.current?.clearLayers();
-    const drawRoute = (positions: LatLng[], fallback: boolean, distance: number, minutes: number) => {
+    const drawRoute = (positions: LatLng[], fallback: boolean, distance: number, minutes: number, steps: NavigationStep[] = []) => {
       const layer = routeLayerRef.current;
       if (!layer) return;
       L.polyline(positions, { pane: "route", color: "#ffffff", weight: 10, opacity: 0.92 }).addTo(layer);
       L.polyline(positions, { pane: "route", color: "#1266ee", weight: 6, opacity: 1, dashArray: fallback ? "7 10" : undefined }).addTo(layer);
       mapRef.current?.fitBounds(L.latLngBounds(positions), { paddingTopLeft: [420, 90], paddingBottomRight: [70, 170], maxZoom: 17 });
-      setRouteInfo({ distance, minutes, fallback, destination });
+      setRouteInfo({ distance, minutes, fallback, destination, positions, steps, currentStep: 0, remainingMeters: distance * 1000, tracking: tracking && !fallback, arrived: false });
       setSelectedParking(null);
     };
 
     try {
       if (!online) throw new Error("offline");
-      const url = `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=false`;
+      const url = `https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${destination.lng},${destination.lat}?overview=full&geometries=geojson&steps=true`;
       const response = await fetch(url);
       if (!response.ok) throw new Error("route");
       const data = (await response.json()) as {
-        routes?: Array<{ distance: number; duration: number; geometry: { coordinates: [number, number][] } }>;
+        routes?: Array<{
+          distance: number;
+          duration: number;
+          geometry: { coordinates: [number, number][] };
+          legs?: Array<{ steps?: Array<{ distance: number; name?: string; maneuver?: { type?: string; modifier?: string; exit?: number; location?: [number, number] } }> }>;
+        }>;
       };
       const route = data.routes?.[0];
       if (!route) throw new Error("route");
       const positions = route.geometry.coordinates.map(([lng, lat]) => [lat, lng] as LatLng);
-      drawRoute(positions, false, route.distance / 1000, route.duration / 60);
+      const steps = (route.legs ?? []).flatMap((leg) => leg.steps ?? []).flatMap((step): NavigationStep[] => {
+        const location = step.maneuver?.location;
+        if (!location || !Number.isFinite(location[0]) || !Number.isFinite(location[1])) return [];
+        return [{
+          instruction: navigationInstruction(step.maneuver?.type, step.maneuver?.modifier, step.name, step.maneuver?.exit),
+          distance: step.distance,
+          location: [location[1], location[0]],
+        }];
+      });
+      drawRoute(positions, false, route.distance / 1000, route.duration / 60, steps);
     } catch {
       const direct = distanceKm(start, [destination.lat, destination.lng]);
       drawRoute([start, [destination.lat, destination.lng]], true, direct, (direct / 25) * 60);
@@ -1436,12 +1505,69 @@ function App() {
     } finally {
       setRouteLoading(false);
     }
-  };
+  }, [online, showNotice]);
 
   const clearRoute = () => {
     routeLayerRef.current?.clearLayers();
     setRouteInfo(null);
   };
+
+  const buildRoute = (destination: ParkingPlace) => {
+    if (userPosition) {
+      void calculateRoute(destination, userPosition, true);
+      return;
+    }
+    if (!navigator.geolocation) {
+      showNotice("GPS saknas. Rutten startar från kartans mitt.");
+      void calculateRoute(destination, viewCenter, false);
+      return;
+    }
+
+    setRouteLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const start: LatLng = [position.coords.latitude, position.coords.longitude];
+        updateUserLocation(start, position.coords.accuracy);
+        void calculateRoute(destination, start, true);
+      },
+      () => {
+        showNotice("GPS nekades. Rutten startar från kartans mitt.");
+        void calculateRoute(destination, viewCenter, false);
+      },
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 10_000 },
+    );
+  };
+
+  useEffect(() => {
+    if (!routeInfo?.tracking || routeInfo.arrived || !navigator.geolocation) return;
+    const watchId = navigator.geolocation.watchPosition(
+      (position) => {
+        const next: LatLng = [position.coords.latitude, position.coords.longitude];
+        updateUserLocation(next, position.coords.accuracy, true);
+        const activeRoute = routeInfoRef.current;
+        if (!activeRoute?.tracking) return;
+
+        const { nearestMeters, remainingMeters } = routeProgress(next, activeRoute.positions);
+        const arrived = distanceKm(next, [activeRoute.destination.lat, activeRoute.destination.lng]) * 1000 < 35;
+        let currentStep = activeRoute.currentStep;
+        while (currentStep < activeRoute.steps.length - 1 && distanceKm(next, activeRoute.steps[currentStep].location) * 1000 < 35) currentStep += 1;
+        setRouteInfo({ ...activeRoute, currentStep, remainingMeters, tracking: !arrived, arrived });
+
+        if (arrived) {
+          showNotice("Du är framme vid parkeringen");
+          return;
+        }
+        if (!activeRoute.fallback && nearestMeters > 90 && Date.now() - lastRerouteRef.current > 15_000) {
+          lastRerouteRef.current = Date.now();
+          showNotice("Du har lämnat rutten — räknar om");
+          void calculateRoute(activeRoute.destination, next, true);
+        }
+      },
+      () => showNotice("GPS-spårning avbröts. Kontrollera platsbehörigheten."),
+      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 5_000 },
+    );
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [calculateRoute, routeInfo?.arrived, routeInfo?.tracking, showNotice, updateUserLocation]);
 
   const dismissPwaInstall = () => {
     localStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, String(Date.now()));
@@ -1904,8 +2030,13 @@ function App() {
         {routeInfo && (
           <motion.div className="route-banner" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
             <span><Route size={22} /></span>
-            <div><small>{routeInfo.fallback ? "Ungefärlig riktning" : "Snabbaste bilvägen"}</small><strong>{Math.max(1, Math.round(routeInfo.minutes))} min <i>·</i> {formatDistance(routeInfo.distance)}</strong><p>Till {routeInfo.destination.name}</p></div>
-            <button type="button" onClick={clearRoute}><X size={18} /></button>
+            <div>
+              <small>{routeInfo.arrived ? "Framme" : routeInfo.fallback ? "Ungefärlig riktning" : routeInfo.tracking ? "Körläge aktivt" : "Snabbaste bilvägen"}</small>
+              <strong>{routeInfo.arrived ? "Du är framme" : routeInfo.steps[routeInfo.currentStep]?.instruction ?? `${Math.max(1, Math.round(routeInfo.minutes))} min <i>·</i> ${formatDistance(routeInfo.distance)}`}</strong>
+              <p>{routeInfo.arrived ? routeInfo.destination.name : `${formatRouteDistance(routeInfo.remainingMeters)} kvar · Till ${routeInfo.destination.name}`}</p>
+              {!routeInfo.arrived && routeInfo.steps[routeInfo.currentStep + 1] ? <em>Nästa: {routeInfo.steps[routeInfo.currentStep + 1].instruction}</em> : null}
+            </div>
+            <button type="button" onClick={clearRoute} aria-label="Avsluta körläge"><X size={18} /></button>
           </motion.div>
         )}
       </AnimatePresence>

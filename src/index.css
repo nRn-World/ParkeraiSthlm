@@ -1176,6 +1176,7 @@ a:focus-visible {
   top: 17px;
   left: 50%;
   display: flex;
+  width: min(430px, calc(100vw - 36px));
   min-width: 295px;
   align-items: center;
   gap: 11px;
@@ -1202,8 +1203,10 @@ a:focus-visible {
 
 .route-banner strong {
   margin-top: 1px;
+  color: #173b74;
   font-size: 14px;
   font-weight: 820;
+  line-height: 1.2;
 }
 
 .route-banner strong i {
@@ -1215,6 +1218,17 @@ a:focus-visible {
   margin: 1px 0 0;
   color: #75838c;
   font-size: 9px;
+}
+
+.route-banner em {
+  overflow: hidden;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .route-banner > button {
@@ -1419,6 +1433,23 @@ a:focus-visible {
   background: #1266ee;
   color: #fff;
   box-shadow: 0 6px 15px rgba(18, 102, 238, 0.2);
+}
+
+@media (max-width: 640px) {
+  .route-banner {
+    top: 12px;
+    min-width: 0;
+    padding: 9px 10px;
+  }
+
+  .route-banner > span {
+    width: 36px;
+    height: 36px;
+  }
+
+  .route-banner strong {
+    font-size: 13px;
+  }
 }
 
 .pwa-install-backdrop {
