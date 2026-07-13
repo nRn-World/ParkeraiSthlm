@@ -15,6 +15,7 @@ export type ParkingPlace = {
   priceText: string;
   note: string;
   spaces?: number;
+  disabledSpaces?: number;
   source: "local" | "osm";
 };
 

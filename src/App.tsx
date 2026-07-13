@@ -3,6 +3,7 @@ import L, { type LayerGroup, type Map as LeafletMap } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  Accessibility,
   Building2,
   CarFront,
   ChevronDown,
@@ -45,7 +46,7 @@ import {
   type TariffId,
 } from "./data";
 
-type Category = "all" | "free" | "garage" | "street" | TariffId;
+type Category = "all" | "free" | "garage" | "street" | "disabled" | TariffId;
 type RouteInfo = { distance: number; minutes: number; fallback: boolean; destination: ParkingPlace };
 type SearchLocation = { name: string; lat: number; lng: number; type: string };
 
@@ -74,8 +75,8 @@ function tariffAt(point: LatLng): TariffId | null {
 }
 
 function parkingIcon(place: ParkingPlace, selected: boolean) {
-  const color = place.free ? "#16a36f" : place.tariff ? TARIFFS[place.tariff].color : "#172536";
-  const letter = place.kind === "garage" ? "G" : "P";
+  const color = place.free ? "#16a36f" : place.tariff ? TARIFFS[place.tariff].color : (place.disabledSpaces ?? 0) > 0 ? "#2563eb" : "#172536";
+  const letter = (place.disabledSpaces ?? 0) > 0 ? "H" : place.kind === "garage" ? "G" : "P";
   return L.divIcon({
     className: "parking-marker-wrap",
     html: `<div class="parking-marker${selected ? " is-selected" : ""}" style="--marker-color:${color}"><span>${letter}</span></div>`,
@@ -110,6 +111,8 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
     const lng = Number(element.lon ?? center?.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
 
+    const isDisabledSpace = tags.amenity === "parking_space" && tags.disabled === "yes";
+
     const parkingTag = tags.parking || "surface";
     const kind = ["underground", "multi-storey", "garage", "sheds"].includes(parkingTag) || tags.building === "parking"
       ? "garage"
@@ -118,8 +121,9 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
         : "surface";
     const free = tags.fee === "no";
     const tariff = free ? null : tariffAt([lat, lng]);
-    const name = tags.name || tags.operator || (kind === "garage" ? "Parkeringsgarage" : "Parkering");
+    const name = isDisabledSpace ? "Handikapparkering" : tags.name || tags.operator || (kind === "garage" ? "Parkeringsgarage" : "Parkering");
     const streetAddress = [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" ");
+    const disabledSpaces = isDisabledSpace ? 1 : Number.isFinite(Number(tags["capacity:disabled"])) ? Number(tags["capacity:disabled"]) : undefined;
 
     return [{
       id: `osm-${String(element.type)}-${String(element.id)}`,
@@ -132,10 +136,13 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       tariff,
       free,
       priceText: free ? "Gratis enligt OSM" : tags.charge || (tags.fee === "yes" ? "Avgift" : "Villkor okända"),
-      note: free
-        ? "Markerad som avgiftsfri i OpenStreetMap. Kontrollera skyltningen på plats."
-        : "Parkeringsplats från OpenStreetMap. Aktuella villkor står vid infarten eller på gatuskylten.",
+      note: isDisabledSpace
+        ? "Handikapparkering. Gällande regler skyltas på plats."
+        : free
+          ? "Markerad som avgiftsfri i OpenStreetMap. Kontrollera skyltningen på plats."
+          : "Parkeringsplats från OpenStreetMap. Aktuella villkor står vid infarten eller på gatuskylten.",
       spaces: Number.isFinite(Number(tags.capacity)) ? Number(tags.capacity) : undefined,
+      disabledSpaces,
       source: "osm",
     }];
   });
@@ -146,6 +153,7 @@ function categoryLabel(category: Category) {
   if (category === "garage") return "Garage";
   if (category === "street") return "Gatuparkering";
   if (category === "free") return "Gratis";
+  if (category === "disabled") return "Handikapp";
   return "Alla parkeringar";
 }
 
@@ -242,10 +250,10 @@ function App() {
 
     setDataLoading(true);
     try {
-      const overpassQuery = `[out:json][timeout:25];nwr["amenity"="parking"](around:7000,59.3293,18.0686);out center tags;`;
+      const overpassQuery = `[out:json][timeout:30];(nwr["amenity"="parking"](around:7000,59.3293,18.0686);nwr["amenity"="parking_space"]["disabled"="yes"](around:7000,59.3293,18.0686););out center tags;`;
       const response = await fetch(`${OVERPASS_ENDPOINT}?data=${encodeURIComponent(overpassQuery)}`);
       if (!response.ok) throw new Error("Kunde inte hämta parkeringsdata");
-      const places = parseOsmParking(await response.json()).slice(0, 220);
+      const places = parseOsmParking(await response.json()).slice(0, 280);
       localStorage.setItem("parksthlm-osm", JSON.stringify({ timestamp: Date.now(), places }));
       setAllParking([...LOCAL_PARKING, ...places]);
       if (force) showNotice(`${places.length} parkeringsplatser uppdaterades`);
@@ -454,6 +462,7 @@ function App() {
     if (category === "free") return place.free;
     if (category === "garage") return place.kind === "garage";
     if (category === "street") return place.kind === "street" || place.kind === "surface";
+    if (category === "disabled") return (place.disabledSpaces ?? 0) > 0;
     return place.tariff === category;
   }, [category]);
 
@@ -528,6 +537,11 @@ function App() {
     }
     if (["garage", "parkeringsgarage"].includes(normalize(value))) {
       selectCategory("garage");
+      setQuery("");
+      return;
+    }
+    if (["handikapp", "handikapparkering", "disabled", "rörelsehindrad"].includes(normalize(value))) {
+      selectCategory("disabled");
       setQuery("");
       return;
     }
@@ -779,6 +793,7 @@ function App() {
           <button className={category === "all" ? "active" : ""} onClick={() => selectCategory("all")} type="button">Alla</button>
           <button className={category === "garage" ? "active" : ""} onClick={() => selectCategory("garage")} type="button"><Warehouse size={15} /> Garage</button>
           <button className={category === "free" ? "active" : ""} onClick={() => selectCategory("free")} type="button">Gratis</button>
+          <button className={category === "disabled" ? "active" : ""} onClick={() => selectCategory("disabled")} type="button">Handikapp</button>
           <button className="filter-button" onClick={() => setFiltersOpen((open) => !open)} type="button" aria-expanded={filtersOpen}>
             <SlidersHorizontal size={15} /> Taxor <ChevronDown size={14} />
           </button>
@@ -838,6 +853,10 @@ function App() {
                 <Route size={16} className="text-gray" />
                 <span>Gatu- & markparkering</span>
               </button>
+              <button type="button" onClick={() => { selectCategory("disabled"); setSearchFocused(false); }} className="suggestion-item">
+                <ParkingCircle size={16} className="text-blue" />
+                <span>Handikapparkering</span>
+              </button>
               
               <div className="suggestions-header">Sök efter taxa</div>
               <div className="suggestion-tariff-grid">
@@ -889,15 +908,15 @@ function App() {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.22, delay: Math.min(index * 0.025, 0.18) }}
                   >
-                    <span className="result-icon" style={{ "--place-color": place.free ? "#16a36f" : place.tariff ? TARIFFS[place.tariff].color : "#172536" } as React.CSSProperties}>
-                      {place.kind === "garage" ? <Building2 size={17} /> : <ParkingCircle size={19} />}
+                    <span className="result-icon" style={{ "--place-color": place.free ? "#16a36f" : place.tariff ? TARIFFS[place.tariff].color : (place.disabledSpaces ?? 0) > 0 ? "#2563eb" : "#172536" } as React.CSSProperties}>
+                      {(place.disabledSpaces ?? 0) > 0 ? <Accessibility size={17} /> : place.kind === "garage" ? <Building2 size={17} /> : <ParkingCircle size={19} />}
                     </span>
                     <span className="result-copy">
                       <strong>{place.name}</strong>
                       <small>{place.address} · {place.area}</small>
                       <span>
                         <b className={place.free ? "free" : ""}>{place.free ? "Gratis" : place.tariff ? `Taxa ${place.tariff}` : place.priceText}</b>
-                        <i>{place.kind === "garage" ? "Garage" : place.kind === "surface" ? "Markparkering" : "Gatuparkering"}</i>
+                        <i>{(place.disabledSpaces ?? 0) > 0 ? "Handikapp" : place.kind === "garage" ? "Garage" : place.kind === "surface" ? "Markparkering" : "Gatuparkering"}</i>
                       </span>
                     </span>
                     <span className="result-distance">{formatDistance(distance)}<Navigation size={14} /></span>
@@ -961,8 +980,8 @@ function App() {
           >
             <button className="sheet-close" type="button" onClick={() => setSelectedParking(null)} aria-label="Stäng"><X size={18} /></button>
             <div className="place-title">
-              <span style={{ "--place-color": selectedParking.free ? "#16a36f" : selectedParking.tariff ? TARIFFS[selectedParking.tariff].color : "#172536" } as React.CSSProperties}>
-                {selectedParking.kind === "garage" ? <Warehouse size={21} /> : <ParkingCircle size={23} />}
+              <span style={{ "--place-color": selectedParking.free ? "#16a36f" : selectedParking.tariff ? TARIFFS[selectedParking.tariff].color : (selectedParking.disabledSpaces ?? 0) > 0 ? "#2563eb" : "#172536" } as React.CSSProperties}>
+                {(selectedParking.disabledSpaces ?? 0) > 0 ? <Accessibility size={21} /> : selectedParking.kind === "garage" ? <Warehouse size={21} /> : <ParkingCircle size={23} />}
               </span>
               <div>
                 <small>{selectedParking.kind === "garage" ? "Parkeringsgarage" : selectedParking.kind === "surface" ? "Markparkering" : "Gatuparkering"}</small>
@@ -977,6 +996,7 @@ function App() {
               <div><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParking.tariff ? getCurrentPrice(selectedParking.tariff).label : selectedParking.priceText}</strong></div>
               <div><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
+              {(selectedParking.disabledSpaces ?? 0) > 0 ? <div><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
             </div>
             <p className="place-note"><CircleAlert size={15} />{selectedParking.free ? "Detta område har ingen ordinarie taxa enligt kartgränserna. Lokala villkor och P-skiva kan gälla." : selectedParking.tariff ? TARIFFS[selectedParking.tariff].hours : selectedParking.note}</p>
             <div className="place-actions">
