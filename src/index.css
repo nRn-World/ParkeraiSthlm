@@ -1293,6 +1293,58 @@ a:focus-visible {
   to { transform: rotate(360deg); }
 }
 
+.offline-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.offline-progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 0 0 12px 12px;
+  overflow: hidden;
+}
+
+.offline-progress-fill {
+  height: 100%;
+  background: #1266ee;
+  transition: width 0.3s ease;
+}
+
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.modal-actions button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 42px;
+  border: 1px solid #dce4e3;
+  border-radius: 10px;
+  background: #fff;
+  color: #52636e;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modal-actions .modal-action {
+  border-color: #1266ee;
+  background: #1266ee;
+  color: #fff;
+  box-shadow: 0 6px 15px rgba(18, 102, 238, 0.2);
+}
+
 @keyframes brand-breathe {
   0%, 100% { transform: scale(0.96); opacity: 0.3; }
   50% { transform: scale(1.08); opacity: 0.7; }

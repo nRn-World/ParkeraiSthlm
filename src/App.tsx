@@ -179,6 +179,8 @@ function App() {
   const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const [offlineReady, setOfflineReady] = useState(localStorage.getItem("parksthlm-offline-ready") === "true");
+  const [offlineDialogOpen, setOfflineDialogOpen] = useState(false);
+  const [offlineProgress, setOfflineProgress] = useState<{ cached: number; total: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [canInstall, setCanInstall] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
@@ -671,16 +673,52 @@ function App() {
       deferredPromptRef.current = null;
       setCanInstall(false);
     } else {
-      // Fallback if install prompt isn't available: save offline
-      localStorage.setItem("parksthlm-offline-ready", "true");
-      setOfflineReady(true);
-      try {
-        const registration = await navigator.serviceWorker?.ready;
-        registration?.active?.postMessage({ type: "CACHE_APP" });
-      } catch {
-        // Local map and parking data are already bundled in the application.
+      setOfflineDialogOpen(true);
+    }
+  };
+
+  const startOfflineDownload = async () => {
+    setOfflineDialogOpen(false);
+    const map = mapRef.current;
+    if (!map) return;
+    const bounds = map.getBounds();
+    const urls: string[] = [];
+    for (let z = 10; z <= 16; z++) {
+      const n = Math.pow(2, z);
+      const xMin = Math.max(0, Math.floor(((bounds.getWest() + 180) / 360) * n));
+      const xMax = Math.min(n - 1, Math.floor(((bounds.getEast() + 180) / 360) * n));
+      if (xMax < xMin) continue;
+      const latRad = (lat: number) => (lat * Math.PI) / 180;
+      const yMin = Math.max(0, Math.floor((1 - Math.log(Math.tan(latRad(bounds.getNorth())) + 1 / Math.cos(latRad(bounds.getNorth()))) / Math.PI) / 2 * n));
+      const yMax = Math.min(n - 1, Math.floor((1 - Math.log(Math.tan(latRad(bounds.getSouth())) + 1 / Math.cos(latRad(bounds.getSouth()))) / Math.PI) / 2 * n));
+      if (yMax < yMin) continue;
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          urls.push(`https://a.tile.openstreetmap.org/${z}/${x}/${y}.png`);
+        }
       }
-      showNotice("Offline-läge klart. Besökta kartvyer sparas automatiskt.");
+    }
+    if (!urls.length) { showNotice("Kunde inte beräkna kartrutor."); return; }
+    setOfflineProgress({ cached: 0, total: urls.length });
+    try {
+      const registration = await navigator.serviceWorker!.ready;
+      const handler = (e: MessageEvent) => {
+        if (e.data?.type === "OFFLINE_PROGRESS") {
+          setOfflineProgress({ cached: e.data.cached, total: e.data.total });
+          if (e.data.cached >= e.data.total) {
+            localStorage.setItem("parksthlm-offline-ready", "true");
+            setOfflineReady(true);
+            setOfflineProgress(null);
+            showNotice("Offline-läge klart!");
+            navigator.serviceWorker.removeEventListener("message", handler);
+          }
+        }
+      };
+      navigator.serviceWorker.addEventListener("message", handler);
+      registration.active?.postMessage({ type: "PREPARE_OFFLINE", urls });
+    } catch {
+      setOfflineProgress(null);
+      showNotice("Misslyckades att starta nedladdning.");
     }
   };
 
@@ -888,7 +926,7 @@ function App() {
           <ListFilter size={18} /> <span>{panelOpen ? "Dölj lista" : "Visa parkeringar"}</span>
         </button>
         <button type="button" onClick={saveOffline} className={canInstall ? "install-prompt-button" : offlineReady ? "offline-saved" : ""}>
-          <Download size={17} /> <span>{isStandalone ? "Appen installerad" : canInstall ? "Ladda ner appen" : offlineReady ? "Offline redo" : "Spara offline"}</span>
+          <Download size={17} /> <span>{isStandalone ? "Appen installerad" : canInstall ? "Ladda ner appen" : offlineProgress ? "Laddar ner..." : offlineReady ? "Offline redo" : "Spara offline"}</span>
         </button>
         <button type="button" onClick={() => setInfoOpen(true)} aria-label="Information"><Info size={18} /></button>
       </div>
@@ -1045,11 +1083,38 @@ function App() {
                 <a href="https://parkering.stockholm/betala-parkering/taxeomraden-avgifter/" target="_blank" rel="noreferrer">Stockholms stads taxor <ExternalLink size={14} /></a>
                 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap <ExternalLink size={14} /></a>
               </div>
-              <button type="button" className="modal-action" onClick={() => { void saveOffline(); setInfoOpen(false); }}><Download size={17} /> {offlineReady ? "Offline-data är sparad" : "Gör appen redo offline"}</button>
+              <button type="button" className="modal-action" onClick={() => { void saveOffline(); setInfoOpen(false); }}><Download size={17} /> {offlineReady ? "Offline-data är sparad" : offlineProgress ? "Laddar ner..." : "Gör appen redo offline"}</button>
             </motion.section>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {offlineDialogOpen && (
+        <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setOfflineDialogOpen(false)}>
+          <motion.section className="info-modal" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(e) => e.stopPropagation()}>
+            <button className="sheet-close" type="button" onClick={() => setOfflineDialogOpen(false)} aria-label="Stäng"><X size={19} /></button>
+            <span className="info-icon"><Download size={24} /></span>
+            <h2>Ladda ner offline-karta?</h2>
+            <p>Kartrutor för det aktuella området (zoom 10–16) laddas ner och sparas i telefonen. Efter nedladdning fungerar kartan, GPS:en och parkeringsdatan utan internet (även i flygplansläge).<br /><br /><strong>Uppskattad storlek:</strong> ~2–10 MB beroende på kartvy.<br /><strong>Adressökning och vägrutt</strong> kräver fortfarande internet.</p>
+            <div className="modal-actions">
+              <button type="button" className="modal-action" onClick={startOfflineDownload}><Download size={17} /> Starta nedladdning</button>
+              <button type="button" onClick={() => setOfflineDialogOpen(false)}>Avbryt</button>
+            </div>
+          </motion.section>
+        </motion.div>
+      )}
+
+      {offlineProgress && (
+        <motion.div className="toast" initial={{ opacity: 0, y: 18, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 14 }}>
+          <div className="offline-progress">
+            <RefreshCw className="spin" size={16} />
+            <span>Laddar ner kartdata... {offlineProgress.cached}/{offlineProgress.total} rutor</span>
+          </div>
+          <div className="offline-progress-bar">
+            <div className="offline-progress-fill" style={{ width: `${(offlineProgress.cached / offlineProgress.total) * 100}%` }} />
+          </div>
+        </motion.div>
+      )}
 
       <AnimatePresence>
         {notice && (
