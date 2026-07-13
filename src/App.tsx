@@ -105,6 +105,52 @@ function formatDistance(km: number) {
   return `${km.toFixed(1).replace(".", ",")} km`;
 }
 
+const OSM_SOCKET_NAMES: Record<string, string> = {
+  type2: "Type 2 (Socket)",
+  type2_tethered: "Type 2 (Tethered)",
+  type2_cable: "Type 2 (Socket)",
+  type2_combo: "CCS (Type 2)",
+  chademo: "CHAdeMO",
+  tesla_supercharger: "Tesla Supercharger",
+  tesla_destination: "Tesla Destination",
+  schuko: "Schuko (Type F)",
+  type1: "Type 1 (J1772)",
+  type1_ccs: "CCS (Type 1)",
+  type3: "Type 3",
+  ccee: "CEE",
+};
+
+function parseOsmSocketTags(tags: Record<string, string>): EvConnection[] | undefined {
+  const connections: EvConnection[] = [];
+  for (const key in tags) {
+    const match = key.match(/^socket:(.+?)(?::output|:voltage|:current|:ampere)?$/);
+    if (!match) continue;
+    const socketName = match[1];
+    if (!OSM_SOCKET_NAMES[socketName]) continue;
+    const value = tags[key];
+    const qty = Number(value);
+    if (!Number.isFinite(qty) || qty < 1) continue;
+    const outputKey = `socket:${socketName}:output`;
+    const voltageKey = `socket:${socketName}:voltage`;
+    const currentKey = `socket:${socketName}:current`;
+    const ampereKey = `socket:${socketName}:ampere`;
+    const powerStr = tags[outputKey];
+    const powerKW = powerStr ? parseFloat(powerStr.replace(/,/g, ".")) : undefined;
+    const voltage = tags[voltageKey] ? parseFloat(tags[voltageKey].replace(/,/g, ".")) : undefined;
+    const current = tags[currentKey] ? parseFloat(tags[currentKey].replace(/,/g, ".")) : tags[ampereKey] ? parseFloat(tags[ampereKey].replace(/,/g, ".")) : undefined;
+    connections.push({
+      quantity: qty,
+      powerKW: powerKW ?? 0,
+      type: OSM_SOCKET_NAMES[socketName],
+      status: "Operativ",
+      currentType: current && voltage ? "AC (Trefas)" : powerKW !== undefined && powerKW > 50 ? "DC" : "AC",
+      amps: current ?? 0,
+      voltage: voltage ?? 0,
+    });
+  }
+  return connections.length > 0 ? connections : undefined;
+}
+
 function parseOsmParking(payload: unknown): ParkingPlace[] {
   if (!payload || typeof payload !== "object" || !("elements" in payload)) return [];
   const elements = (payload as { elements?: Array<Record<string, unknown>> }).elements;
@@ -140,6 +186,7 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       return undefined;
     })();
     const evSpacesVal = isChargingStation ? (Number.isFinite(Number(tags.capacity)) ? Number(tags.capacity) : 1) : Number.isFinite(Number(tags["capacity:charging"])) ? Number(tags["capacity:charging"]) : undefined;
+    const evConnectionsVal = isChargingStation ? parseOsmSocketTags(tags) : undefined;
 
     return [{
       id: `osm-${String(element.type)}-${String(element.id)}`,
@@ -162,6 +209,7 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       spaces: Number.isFinite(Number(tags.capacity)) ? Number(tags.capacity) : undefined,
       disabledSpaces: disabledSpacesVal,
       evSpaces: evSpacesVal,
+      evConnections: evConnectionsVal,
       source: "osm",
     }];
   });
@@ -1317,6 +1365,7 @@ function App() {
                   {c.amps > 0 && c.voltage > 0 && <span className="ev-av">{c.amps}A {c.voltage}V</span>}
                 </div>
               ))}
+              {selectedParking.evSpaces && !selectedParking.evConnections ? <span className="place-ev-missing">Ingen detaljerad information om laddkontakter finns tillgänglig för denna plats.</span> : null}
             </div>
             <p className="place-note"><CircleAlert size={15} />{selectedParking.free ? "Detta område har ingen ordinarie taxa enligt kartgränserna. Lokala villkor och P-skiva kan gälla." : selectedParking.tariff ? TARIFFS[selectedParking.tariff].hours : selectedParking.note}</p>
             <div className="place-actions">

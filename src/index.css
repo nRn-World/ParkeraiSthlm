@@ -1099,6 +1099,14 @@ a:focus-visible {
   color: #6b7280;
 }
 
+.place-ev-missing {
+  display: block;
+  margin-top: 8px;
+  color: #9ca3af;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
 .place-actions {
   display: grid;
   grid-template-columns: 1.6fr 1fr 1fr;
@@ -2185,6 +2193,10 @@ a:focus-visible {
 .dark .place-ev-conn .ev-current,
 .dark .place-ev-conn .ev-av {
   color: #9ca3af;
+}
+
+.dark .place-ev-missing {
+  color: #6b7280;
 }
 
 .dark .place-actions button {
