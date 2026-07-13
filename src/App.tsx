@@ -566,11 +566,21 @@ function App() {
     if (!navigator.onLine) return;
     const key = "parksthlm-ocm";
     const cachedRaw = localStorage.getItem(key);
+    let ocmPlaces: ParkingPlace[] | null = null;
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
         if (cached.version === 1 && Array.isArray(cached.places)) {
-          setAllParking((prev) => [...prev, ...cached.places.filter((p) => !prev.some((x) => x.id === p.id))]);
+          ocmPlaces = cached.places;
+          setAllParking((prev) => {
+            const injected = prev.map((p) => {
+              if ((p.evSpaces ?? 0) === 0 || (p.evConnections ?? []).length > 0) return p;
+              const match = ocmPlaces!.find((o) => (o.evConnections ?? []).length > 0 && distanceKm([p.lat, p.lng], [o.lat, o.lng]) < 0.05);
+              return match ? { ...p, evConnections: match.evConnections } : p;
+            });
+            const ocmIds = new Set(prev.map((p) => p.id));
+            return [...injected, ...ocmPlaces!.filter((o) => !ocmIds.has(o.id))];
+          });
           if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
         }
       } catch { localStorage.removeItem(key); }
@@ -582,9 +592,17 @@ function App() {
         + "&key=" + OCM_API_KEY;
       const res = await fetch(url);
       if (!res.ok) return;
-      const places = parseOcmParking(await res.json());
-      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
-      setAllParking((prev) => [...prev, ...places.filter((p) => !prev.some((x) => x.id === p.id))]);
+      ocmPlaces = parseOcmParking(await res.json());
+      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places: ocmPlaces }));
+      setAllParking((prev) => {
+        const injected = prev.map((p) => {
+          if ((p.evSpaces ?? 0) === 0 || (p.evConnections ?? []).length > 0) return p;
+          const match = ocmPlaces!.find((o) => (o.evConnections ?? []).length > 0 && distanceKm([p.lat, p.lng], [o.lat, o.lng]) < 0.05);
+          return match ? { ...p, evConnections: match.evConnections } : p;
+        });
+        const ocmIds = new Set(prev.map((p) => p.id));
+        return [...injected, ...ocmPlaces!.filter((o) => !ocmIds.has(o.id))];
+      });
     } catch { /* silent */ }
   }, []);
 
