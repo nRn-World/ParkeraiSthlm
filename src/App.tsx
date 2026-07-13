@@ -96,17 +96,21 @@ function normalize(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
+function isTariffId(value: unknown): value is TariffId {
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5;
+}
+
 function placeColor(place: ParkingPlace) {
   if ((place.evSpaces ?? 0) > 0) return "#7c3aed";
   if ((place.disabledSpaces ?? 0) > 0) return "#2563eb";
   if ((place.mcSpaces ?? 0) > 0) return "#d97706";
   if (place.free) return "#16a36f";
-  return place.tariff ? TARIFFS[place.tariff].color : "#172536";
+  return isTariffId(place.tariff) ? TARIFFS[place.tariff].color : "#172536";
 }
 
 function placeTariffLabel(place: ParkingPlace) {
   if (place.free) return "Avgiftsfri";
-  if (place.tariff) return `Taxa ${place.tariff}`;
+  if (isTariffId(place.tariff)) return `Taxa ${place.tariff}`;
   return place.priceText;
 }
 
@@ -1243,6 +1247,7 @@ function App() {
 
   const filteredParking = useMemo(() => allParking.filter(matchesCategory), [allParking, matchesCategory]);
   const focusPosition = userPosition || searchPosition || viewCenter;
+  const selectedParkingTariff = selectedParking && isTariffId(selectedParking.tariff) ? selectedParking.tariff : null;
 
   useEffect(() => {
     if (category !== "mc") {
@@ -1922,7 +1927,7 @@ function App() {
               </div>
             </div>
             <div className="place-facts">
-              <div><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParking.tariff ? getCurrentPrice(selectedParking.tariff).label : selectedParking.priceText}</strong></div>
+              <div><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParkingTariff ? getCurrentPrice(selectedParkingTariff).label : selectedParking.priceText}</strong></div>
               <div><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
               {(selectedParking.disabledSpaces ?? 0) > 0 ? <div><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
@@ -1940,7 +1945,7 @@ function App() {
               ))}
               {selectedParking.evSpaces && !selectedParking.evConnections ? <span className="place-ev-missing">Ingen detaljerad information om laddkontakter finns tillgänglig för denna plats.</span> : null}
             </div>
-            <p className="place-note"><CircleAlert size={15} />{selectedParking.tariff ? TARIFFS[selectedParking.tariff].hours : selectedParking.note}</p>
+            <p className="place-note"><CircleAlert size={15} />{selectedParkingTariff ? TARIFFS[selectedParkingTariff].hours : selectedParking.note}</p>
             <div className="place-actions">
               <button type="button" className="primary-action" onClick={() => void buildRoute(selectedParking)} disabled={routeLoading}>
                 {routeLoading ? <RefreshCw className="spin" size={18} /> : <Navigation size={18} />} Navigera hit
