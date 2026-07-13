@@ -977,6 +977,17 @@ a:focus-visible {
   font-size: 10px;
 }
 
+.place-tariff {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 770;
+  letter-spacing: 0.01em;
+}
+
 .place-facts {
   display: flex;
   gap: 0;

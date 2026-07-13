@@ -124,7 +124,7 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
     return [{
       id: `osm-${String(element.type)}-${String(element.id)}`,
       name,
-      address: streetAddress || tags.description || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+      address: streetAddress || tags.description || tags.name || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
       area: tags["addr:suburb"] || tags["addr:city"] || "Stockholm",
       lat,
       lng,
@@ -964,14 +964,21 @@ function App() {
               <span style={{ "--place-color": selectedParking.free ? "#16a36f" : selectedParking.tariff ? TARIFFS[selectedParking.tariff].color : "#172536" } as React.CSSProperties}>
                 {selectedParking.kind === "garage" ? <Warehouse size={21} /> : <ParkingCircle size={23} />}
               </span>
-              <div><small>{selectedParking.kind === "garage" ? "Parkeringsgarage" : selectedParking.kind === "surface" ? "Markparkering" : "Gatuparkering"}</small><h2>{selectedParking.name}</h2><p>{selectedParking.address}, {selectedParking.area}</p></div>
+              <div>
+                <small>{selectedParking.kind === "garage" ? "Parkeringsgarage" : selectedParking.kind === "surface" ? "Markparkering" : "Gatuparkering"}</small>
+                <h2>{selectedParking.name}</h2>
+                <p>{selectedParking.address}, {selectedParking.area}</p>
+                <span className="place-tariff" style={{ background: selectedParking.free ? "#16a36f" : TARIFFS[selectedParking.tariff!].color }}>
+                  {selectedParking.free ? "Gratis" : `Taxa ${selectedParking.tariff}`}
+                </span>
+              </div>
             </div>
             <div className="place-facts">
               <div><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParking.tariff ? getCurrentPrice(selectedParking.tariff).label : selectedParking.priceText}</strong></div>
               <div><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
             </div>
-            <p className="place-note"><CircleAlert size={15} />{selectedParking.note}</p>
+            <p className="place-note"><CircleAlert size={15} />{selectedParking.free ? "Detta område har ingen ordinarie taxa enligt kartgränserna. Lokala villkor och P-skiva kan gälla." : selectedParking.tariff ? TARIFFS[selectedParking.tariff].hours : selectedParking.note}</p>
             <div className="place-actions">
               <button type="button" className="primary-action" onClick={() => void buildRoute(selectedParking)} disabled={routeLoading}>
                 {routeLoading ? <RefreshCw className="spin" size={18} /> : <Navigation size={18} />} Navigera hit
@@ -1009,6 +1016,9 @@ function App() {
                   <h2>{clickedPlace.name}</h2>
                 )}
                 <p>{clickedPlace.address}</p>
+                <span className="place-tariff" style={{ background: clickedPlace.free ? "#16a36f" : TARIFFS[clickedPlace.tariff!].color }}>
+                  {clickedPlace.free ? "Gratis" : `Taxa ${clickedPlace.tariff}`}
+                </span>
               </div>
             </div>
             <div className="place-facts">
