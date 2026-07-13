@@ -17,7 +17,18 @@ export type ParkingPlace = {
   spaces?: number;
   disabledSpaces?: number;
   evSpaces?: number;
+  evConnections?: EvConnection[];
   source: "local" | "osm" | "api" | "ocm";
+};
+
+export type EvConnection = {
+  quantity: number;
+  powerKW: number;
+  type: string;
+  status: string;
+  currentType: string;
+  amps: number;
+  voltage: number;
 };
 
 export type TaxArea = {

@@ -1042,6 +1042,63 @@ a:focus-visible {
   color: #e18c3c;
 }
 
+.place-ev-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding-bottom: 6px;
+  color: #7c3aed;
+  font-size: 10px;
+  font-weight: 750;
+  border-bottom: 1px solid #e7eceb;
+}
+
+.place-ev-header svg {
+  flex: 0 0 auto;
+}
+
+.place-ev-header small {
+  margin-right: auto;
+  font-weight: 650;
+}
+
+.place-ev-conn {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 8px;
+  margin-top: 7px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.place-ev-conn .ev-qty {
+  color: #7c3aed;
+  font-weight: 750;
+}
+
+.place-ev-conn .ev-status {
+  color: #16a36f;
+  font-weight: 650;
+}
+
+.place-ev-conn .ev-type {
+  grid-column: 2;
+  color: #4b5563;
+}
+
+.place-ev-conn .ev-power {
+  grid-column: 2;
+  color: #263746;
+  font-weight: 700;
+}
+
+.place-ev-conn .ev-current,
+.place-ev-conn .ev-av {
+  grid-column: 2;
+  color: #6b7280;
+}
+
 .place-actions {
   display: grid;
   grid-template-columns: 1.6fr 1fr 1fr;
@@ -2111,6 +2168,23 @@ a:focus-visible {
 
 .dark .place-note {
   color: #94a3b8;
+}
+
+.dark .place-ev-header {
+  border-bottom-color: #334155;
+}
+
+.dark .place-ev-conn .ev-type {
+  color: #cbd5e1;
+}
+
+.dark .place-ev-conn .ev-power {
+  color: #f1f5f9;
+}
+
+.dark .place-ev-conn .ev-current,
+.dark .place-ev-conn .ev-av {
+  color: #9ca3af;
 }
 
 .dark .place-actions button {

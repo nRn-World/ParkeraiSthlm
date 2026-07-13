@@ -38,6 +38,7 @@ import {
   getCurrentPrice,
   LOCAL_PARKING,
   OFFLINE_BASE_ROADS,
+  type EvConnection,
   type ParkingPlace,
   STOCKHOLM_CENTER,
   TARIFFS,
@@ -231,6 +232,40 @@ type OcmPoi = {
   };
   NumberOfPoints?: number;
   UsageCost?: string;
+  Connections?: Array<{
+    ConnectionTypeID?: number;
+    StatusTypeID?: number;
+    LevelID?: number;
+    PowerKW?: number;
+    Quantity?: number;
+    CurrentTypeID?: number;
+    Amps?: number;
+    Voltage?: number;
+  }>;
+};
+
+const CONN_TYPE_NAMES: Record<number, string> = {
+  0: "Okänd",
+  1: "Type 1 (J1772)",
+  2: "Type 2 (Socket)",
+  25: "Type 2 (Tethered)",
+  27: "Type 3A",
+  28: "Type 3",
+  30: "Tesla Connector",
+  33: "CCS (Type 2)",
+  1036: "CHAdeMO",
+};
+
+const CURRENT_TYPE_NAMES: Record<number, string> = {
+  10: "AC (Enfas)",
+  20: "AC (Trefas)",
+  30: "DC",
+};
+
+const STATUS_NAMES: Record<number, string> = {
+  50: "Operativ",
+  75: "Delvis operativ",
+  100: "Stängd",
 };
 
 function parseOcmParking(payload: unknown): ParkingPlace[] {
@@ -239,6 +274,20 @@ function parseOcmParking(payload: unknown): ParkingPlace[] {
     const addr = p.AddressInfo;
     if (!addr || !Number.isFinite(addr.Latitude) || !Number.isFinite(addr.Longitude)) return [];
     const totalPoints = p.NumberOfPoints ?? 1;
+    const connections: EvConnection[] = (p.Connections ?? []).flatMap((c): EvConnection[] => {
+      const qty = c.Quantity ?? 1;
+      const kw = c.PowerKW ?? 0;
+      if (qty < 1 || kw < 1) return [];
+      return [{
+        quantity: qty,
+        powerKW: kw,
+        type: CONN_TYPE_NAMES[c.ConnectionTypeID ?? 0] ?? "Okänd",
+        status: STATUS_NAMES[c.StatusTypeID ?? 0] ?? "Okänd",
+        currentType: CURRENT_TYPE_NAMES[c.CurrentTypeID ?? 0] ?? "",
+        amps: c.Amps ?? 0,
+        voltage: c.Voltage ?? 0,
+      }];
+    });
     return [{
       id: "ocm-" + p.ID,
       name: addr.Title || "Laddstation",
@@ -252,6 +301,7 @@ function parseOcmParking(payload: unknown): ParkingPlace[] {
       priceText: p.UsageCost || "Laddstation",
       note: addr.AccessComments ? "Info: " + addr.AccessComments : "Laddstation från Open Charge Map.",
       evSpaces: totalPoints,
+      evConnections: connections.length > 0 ? connections : undefined,
       source: "api",
     }];
   });
@@ -1256,7 +1306,17 @@ function App() {
               <div><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
               {(selectedParking.disabledSpaces ?? 0) > 0 ? <div><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
-              {(selectedParking.evSpaces ?? 0) > 0 ? <div><small>Elladdning</small><strong>{selectedParking.evSpaces} plats{selectedParking.evSpaces !== 1 ? "er" : ""}</strong></div> : null}
+              {(selectedParking.evSpaces ?? 0) > 0 ? <div className="place-ev-header"><Zap size={16} /><small>Elladdning</small><strong>{selectedParking.evSpaces} plats{selectedParking.evSpaces !== 1 ? "er" : ""}</strong></div> : null}
+              {selectedParking.evConnections?.map((c, i) => (
+                <div key={i} className="place-ev-conn">
+                  <span className="ev-qty">{c.quantity} ×</span>
+                  <span className="ev-status">{c.status}</span>
+                  <span className="ev-type">{c.type}</span>
+                  <span className="ev-power">{c.powerKW} kW</span>
+                  {c.currentType && <span className="ev-current">{c.currentType}</span>}
+                  {c.amps > 0 && c.voltage > 0 && <span className="ev-av">{c.amps}A {c.voltage}V</span>}
+                </div>
+              ))}
             </div>
             <p className="place-note"><CircleAlert size={15} />{selectedParking.free ? "Detta område har ingen ordinarie taxa enligt kartgränserna. Lokala villkor och P-skiva kan gälla." : selectedParking.tariff ? TARIFFS[selectedParking.tariff].hours : selectedParking.note}</p>
             <div className="place-actions">
