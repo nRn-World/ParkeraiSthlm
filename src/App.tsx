@@ -124,7 +124,7 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
     return [{
       id: `osm-${String(element.type)}-${String(element.id)}`,
       name,
-      address: streetAddress || tags.description || "Adress saknas",
+      address: streetAddress || tags.description || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
       area: tags["addr:suburb"] || tags["addr:city"] || "Stockholm",
       lat,
       lng,
@@ -678,6 +678,7 @@ function App() {
   };
 
   const startOfflineDownload = async () => {
+    if (offlineProgress) return;  // Already downloading
     setOfflineDialogOpen(false);
     const map = mapRef.current;
     if (!map) return;
