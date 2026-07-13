@@ -28,7 +28,7 @@ function localDataProxy(env: Record<string, string>) {
         try {
           await writeProxyResponse(await fetchWithTimeout("https://api.stockholmparkering.se:8084/SparkInfartsParkeringService.svc/GetAllAnlaggningParkeringsInfo", {
             headers: { Accept: "application/json", "User-Agent": "Parkera-i-Stockholm-local" },
-          }), res);
+          }, 15_000), res);
         } catch {
           res.statusCode = 502;
           res.end(JSON.stringify({ error: "Stockholm Parkering kunde inte nås" }));
@@ -79,7 +79,8 @@ function localDataProxy(env: Record<string, string>) {
 
       server.middlewares.use("/api/stockholm-open-data", async (req, res) => {
         const key = env.STOCKHOLM_OPEN_DATA_API_KEY;
-        const rule = (req.url ?? "").split("?")[0].replace(/^\/+/, "");
+        const requestUrl = new URL(req.url ?? "/", "http://localhost");
+        const rule = requestUrl.pathname.replace(/^\/+/, "");
         const allowedRules = new Set(["pmotorcykel", "prorelsehindrad", "ptillaten"]);
         if (!allowedRules.has(rule)) {
           res.statusCode = 404;
@@ -91,10 +92,28 @@ function localDataProxy(env: Record<string, string>) {
           res.end(JSON.stringify({ error: "STOCKHOLM_OPEN_DATA_API_KEY saknas i .env.local" }));
           return;
         }
-        const params = new URLSearchParams({ outputFormat: "json", apiKey: key });
+        const lat = Number(requestUrl.searchParams.get("lat"));
+        const lng = Number(requestUrl.searchParams.get("lng"));
+        const fetchAll = requestUrl.searchParams.get("all") === "true";
+        const radius = Math.min(Math.max(Number(requestUrl.searchParams.get("radius")) || 1150, 50), 5_000);
+        if (!fetchAll && (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180)) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: "Giltiga koordinater krävs för områdessökning" }));
+          return;
+        }
+        const params = new URLSearchParams({
+          outputFormat: "json",
+          apiKey: key,
+          maxFeatures: fetchAll ? "25000" : "3000",
+        });
+        if (!fetchAll) {
+          params.set("lat", String(lat));
+          params.set("lng", String(lng));
+          params.set("radius", String(Math.round(radius)));
+        }
         try {
           await writeProxyResponse(await fetchWithTimeout(
-            `https://openparking.stockholm.se/LTF-Tolken/v1/${rule}/all?${params}`,
+            `https://openparking.stockholm.se/LTF-Tolken/v1/${rule}/${fetchAll ? "all" : "within"}?${params}`,
             { headers: { Accept: "application/json", "User-Agent": "Parkera-i-Stockholm-local" } },
             60_000,
           ), res);
