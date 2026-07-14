@@ -78,8 +78,7 @@ const OVERPASS_ENDPOINTS = [
 const OVERPASS_ENDPOINT = OVERPASS_ENDPOINTS[0];
 const STOCKHOLM_DATA_BBOX = "59.15,17.70,59.50,18.35";
 const NON_PUBLIC_OSM_ACCESS = new Set(["private", "no", "permit", "employees"]);
-const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-at-v3";
-const PWA_INSTALL_DISMISSAL_MS = 3 * 24 * 60 * 60 * 1000;
+const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-v4";
 const AREA_SEARCH_RADIUS_KM = 1.15;
 
 function isIosDevice() {
@@ -87,12 +86,11 @@ function isIosDevice() {
 }
 
 function isMobileDevice() {
-  return isIosDevice() || /Android/i.test(navigator.userAgent);
+  return isIosDevice() || /Android/i.test(navigator.userAgent) || window.matchMedia("(max-width: 820px)").matches;
 }
 
 function hasRecentPwaInstallDismissal() {
-  const dismissedAt = Number(localStorage.getItem(PWA_INSTALL_DISMISSAL_KEY));
-  return Number.isFinite(dismissedAt) && Date.now() - dismissedAt < PWA_INSTALL_DISMISSAL_MS;
+  return sessionStorage.getItem(PWA_INSTALL_DISMISSAL_KEY) === "true";
 }
 
 function normalize(value: string) {
@@ -329,7 +327,63 @@ type ApiFacility = {
   BesokstaxaCollection?: Array<{ Galler?: string; Taxa?: number; Tidsenhet?: string; ParkeringsTypNamn?: string }>;
 };
 
+type StockholmParkingFacility = {
+  id?: string;
+  name?: string;
+  url?: string;
+  location?: { address?: string; areaCode?: string; position?: { latitude?: number; longitude?: number } };
+  visitorTaxes?: Array<{ tax?: number; timeUnit?: string; active?: string; parkingTypeName?: string }>;
+  facilityType?: string;
+  features?: {
+    totalVisitorSpace?: number;
+    totalDisabledSpaces?: number;
+    totalMcVisitorSpaces?: number;
+    loadingSpacesCarVisitors?: number;
+    fastLoadingSpaces?: number;
+  };
+  isVisit?: boolean;
+  isGarage?: boolean;
+  isSurfaceParking?: boolean;
+  facilityNumber?: string;
+};
+
 function parseApiParking(payload: unknown): ParkingPlace[] {
+  const currentFacilities = (payload as { Hits?: StockholmParkingFacility[] } | null)?.Hits;
+  if (Array.isArray(currentFacilities)) {
+    return currentFacilities.flatMap((facility): ParkingPlace[] => {
+      const lat = Number(facility.location?.position?.latitude);
+      const lng = Number(facility.location?.position?.longitude);
+      if (!facility.name || facility.isVisit === false || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+      const tax = facility.visitorTaxes?.find((entry) => Number.isFinite(Number(entry.tax)));
+      const free = Number(tax?.tax) === 0;
+      const priceText = free
+        ? "Avgiftsfri enligt Stockholm Parkering"
+        : tax
+          ? `${tax.tax} kr/${tax.timeUnit?.toLowerCase() ?? "timme"}`
+          : "Pris ej rapporterat";
+      const evSpaces = (facility.features?.loadingSpacesCarVisitors ?? 0) + (facility.features?.fastLoadingSpaces ?? 0);
+      return [{
+        id: `api-${facility.facilityNumber ?? facility.id ?? facility.name.replace(/\s+/g, "-")}`,
+        name: facility.name,
+        address: facility.location?.address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+        area: facility.location?.areaCode || "Stockholm",
+        lat,
+        lng,
+        kind: facility.isGarage || normalize(facility.facilityType ?? "").includes("garage") ? "garage" : "surface",
+        tariff: null,
+        free,
+        priceText,
+        note: tax
+          ? `Stockholm Parkering: ${tax.active ?? "se skyltning"}, ${tax.tax} kr/${tax.timeUnit?.toLowerCase() ?? "tim"}.`
+          : "Pris saknas i Stockholm Parkerings aktuella data. Kontrollera skyltningen på plats.",
+        spaces: facility.features?.totalVisitorSpace || undefined,
+        disabledSpaces: facility.features?.totalDisabledSpaces || undefined,
+        mcSpaces: facility.features?.totalMcVisitorSpaces || undefined,
+        evSpaces: evSpaces || undefined,
+        source: "api",
+      }];
+    });
+  }
   if (!Array.isArray(payload)) return [];
   return (payload as ApiFacility[]).flatMap((f): ParkingPlace[] => {
     const name = f.Namn ?? f.Name;
@@ -957,12 +1011,12 @@ function App() {
   }, []);
 
   const fetchApiParking = useCallback(async (force = false) => {
-    const CACHE_KEY = "parksthlm-api";
+    const CACHE_KEY = "parksthlm-api-v4";
     const cachedRaw = localStorage.getItem(CACHE_KEY);
     if (cachedRaw && !force) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version !== 3) throw new Error("cache-version");
+        if (cached.version !== 4) throw new Error("cache-version");
         if (Array.isArray(cached.places)) setAllParking((prev) => replaceSource(prev, "api", cached.places));
         if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
       } catch {
@@ -971,12 +1025,11 @@ function App() {
     }
     if (!navigator.onLine) return;
     try {
-      const response = await fetch("/api/stockholm-parking");
-      if (!response.ok) throw new Error("Kunde inte hämta infartsparkeringar");
-      const places = parseApiParking(await response.json());
+      const payload = await fetchJsonWithBundledFallback("/api/stockholm-parking", "stockholm-parking.json");
+      const places = parseApiParking(payload);
       setAllParking((prev) => replaceSource(prev, "api", places));
       try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), version: 3, places }));
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), version: 4, places }));
       } catch {
         localStorage.removeItem(CACHE_KEY);
       }
@@ -1776,17 +1829,30 @@ function App() {
     }
   };
 
-  const chooseSearchLocation = (location: SearchLocation) => {
+  const chooseSearchLocation = async (location: SearchLocation) => {
     const position: LatLng = [location.lat, location.lng];
+    const scope: AreaScope = { center: position, label: location.name.split(",")[0], radiusKm: AREA_SEARCH_RADIUS_KM };
     setSearchPosition(position);
-    setAreaScope({ center: position, label: location.name.split(",")[0], radiusKm: AREA_SEARCH_RADIUS_KM });
+    setAreaScope(scope);
     setLimitToArea(true);
     setClickedPosition(null);
     setSearchFocused(false);
     setQuery("");
     setSearchLocations([]);
     mapRef.current?.flyTo(position, 16, { duration: 1.2 });
-    showNotice("Välj ett filter och hämta verifierade parkeringar i området");
+    setAreaLoading(true);
+    try {
+      await Promise.all([
+        fetchNearbyOsmParking(scope),
+        fetchOfficialRuleParking(["ptillaten", "prorelsehindrad", "pmotorcykel"], scope),
+        fetchApiParking(),
+      ]);
+      showNotice(`Parkeringar nära ${scope.label} har hämtats`);
+    } catch {
+      showNotice("Alla parkeringar i området kunde inte hämtas. Sparad data visas.");
+    } finally {
+      setAreaLoading(false);
+    }
   };
 
   const updateUserLocation = useCallback((next: LatLng, accuracy: number, followRoute = false) => {
@@ -1942,7 +2008,7 @@ function App() {
   }, [calculateRoute, routeInfo?.arrived, routeInfo?.tracking, showNotice, updateUserLocation]);
 
   const dismissPwaInstall = () => {
-    localStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, String(Date.now()));
+    sessionStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, "true");
     setPwaInstallOpen(false);
   };
 
@@ -1954,7 +2020,7 @@ function App() {
 
     const prompt = deferredPromptRef.current;
     if (!prompt) {
-      showNotice("Chrome behöver först göra appen installbar. Vänta en sekund och prova igen.");
+      showNotice("Öppna webbläsarens meny och välj Installera app eller Lägg till på hemskärmen.");
       return;
     }
 
@@ -2502,13 +2568,20 @@ function App() {
               <p className="pwa-install-eyebrow">PARKERA I STHLM</p>
               <h2 id="pwa-install-title">Ha kartan nära till hands</h2>
               {installPlatform === "android" ? (
-                <p>Installera Parkera i Sthlm på hemskärmen för snabb åtkomst till kartan, även när uppkopplingen är svag.</p>
+                <>
+                  <p>Installera Parkera i Sthlm som en riktig webbapp, inte som en vanlig genväg.</p>
+                  <ol className="pwa-install-steps">
+                    <li><span>1</span><div>Tryck på <strong>Installera appen</strong> nedan.</div></li>
+                    <li><span>2</span><div>Om ingen ruta öppnas: välj webbläsarens meny och sedan <strong>Installera app</strong>.</div></li>
+                  </ol>
+                </>
               ) : (
                 <>
                   <p>Du kan lägga till Parkera i Sthlm på hemskärmen och öppna den som en vanlig app.</p>
                   <ol className="pwa-install-steps">
                     <li><span>1</span><div>Tryck på <strong>Dela</strong> i Safari.</div></li>
                     <li><span>2</span><div>Välj <strong>Lägg till på hemskärmen</strong>.</div></li>
+                    <li><span>3</span><div>Kontrollera att <strong>Öppna som webbapp</strong> är aktiverat och tryck på Lägg till.</div></li>
                   </ol>
                 </>
               )}

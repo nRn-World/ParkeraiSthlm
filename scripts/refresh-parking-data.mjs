@@ -28,8 +28,36 @@ async function fetchJson(url, init, label) {
 async function saveJson(fileName, payload) {
   const target = path.join(outputDirectory, fileName);
   await writeFile(target, JSON.stringify(payload), "utf8");
-  const count = Array.isArray(payload) ? payload.length : payload?.features?.length ?? payload?.chargerstations?.length ?? 0;
+  const count = Array.isArray(payload) ? payload.length : payload?.features?.length ?? payload?.chargerstations?.length ?? payload?.Hits?.length ?? 0;
   console.log(`${fileName}: ${count} poster`);
+}
+
+async function fetchStockholmParking() {
+  const homepageResponse = await fetch("https://www.stockholmparkering.se/", {
+    headers: { "User-Agent": "ParkeraiSthlm-data-refresh" },
+  });
+  if (!homepageResponse.ok) throw new Error(`Stockholm Parkering svarade ${homepageResponse.status}`);
+  const homepage = await homepageResponse.text();
+  const token = homepage.match(/meta name="anti-forgery-token" content="([^"]+)"/)?.[1];
+  if (!token) throw new Error("Stockholm Parkerings verifieringstoken saknas");
+  const cookies = typeof homepageResponse.headers.getSetCookie === "function"
+    ? homepageResponse.headers.getSetCookie().map((cookie) => cookie.split(";", 1)[0]).join("; ")
+    : homepageResponse.headers.get("set-cookie")?.split(/,(?=[^;,]+=[^;,]+)/).map((cookie) => cookie.split(";", 1)[0]).join("; ");
+  const params = new URLSearchParams({ query: "", showAll: "true", showRental: "true", showVisit: "true", showMobility: "true" });
+  return fetchJson(
+    `https://www.stockholmparkering.se/api/map?${params}`,
+    {
+      headers: {
+        Accept: "application/json",
+        Language: "sv",
+        "User-Agent": "ParkeraiSthlm-data-refresh",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-RequestVerificationToken": token,
+        ...(cookies ? { Cookie: cookies } : {}),
+      },
+    },
+    "Stockholm Parkering",
+  );
 }
 
 function compactOfficial(payload) {
@@ -98,6 +126,34 @@ function compactNobil(payload) {
   };
 }
 
+function compactStockholmParking(payload) {
+  return {
+    Hits: (payload?.Hits ?? []).map((facility) => ({
+      id: facility.id,
+      name: facility.name,
+      url: facility.url,
+      location: facility.location && {
+        address: facility.location.address,
+        areaCode: facility.location.areaCode,
+        position: facility.location.position,
+      },
+      visitorTaxes: facility.visitorTaxes,
+      facilityType: facility.facilityType,
+      features: facility.features && {
+        totalVisitorSpace: facility.features.totalVisitorSpace,
+        totalDisabledSpaces: facility.features.totalDisabledSpaces,
+        totalMcVisitorSpaces: facility.features.totalMcVisitorSpaces,
+        loadingSpacesCarVisitors: facility.features.loadingSpacesCarVisitors,
+        fastLoadingSpaces: facility.features.fastLoadingSpaces,
+      },
+      isVisit: facility.isVisit,
+      isGarage: facility.isGarage,
+      isSurfaceParking: facility.isSurfaceParking,
+      facilityNumber: facility.facilityNumber,
+    })),
+  };
+}
+
 const env = await readLocalEnv();
 const stockholmKey = env.STOCKHOLM_OPEN_DATA_API_KEY;
 const ocmKey = env.OCM_API_KEY;
@@ -108,6 +164,8 @@ if (!stockholmKey || !ocmKey || !nobilKey) {
 }
 
 await mkdir(outputDirectory, { recursive: true });
+
+await saveJson("stockholm-parking.json", compactStockholmParking(await fetchStockholmParking()));
 
 for (const rule of ["pmotorcykel", "prorelsehindrad", "ptillaten"]) {
   const params = new URLSearchParams({
