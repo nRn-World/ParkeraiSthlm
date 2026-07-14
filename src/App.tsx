@@ -12,6 +12,7 @@ import {
   Crosshair,
   Download,
   ExternalLink,
+  Heart,
   Info,
   Layers3,
   ListFilter,
@@ -23,7 +24,10 @@ import {
   ParkingCircle,
   RefreshCw,
   Route,
+  Save,
   Search,
+  Settings2,
+  Share2,
   SlidersHorizontal,
   Sun,
   Warehouse,
@@ -31,6 +35,8 @@ import {
   WifiOff,
   X,
   Zap,
+  Clock3,
+  Trash2,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -66,6 +72,16 @@ type RouteInfo = {
 };
 type SearchLocation = { name: string; lat: number; lng: number; type: string };
 type InstallPlatform = "android" | "ios";
+type VehicleProfile = "car" | "ev" | "mc" | "disabled";
+type ParkedCar = {
+  lat: number;
+  lng: number;
+  address: string;
+  savedAt: number;
+  note: string;
+  spot: string;
+  source: "parking" | "gps" | "search" | "map";
+};
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
@@ -80,6 +96,25 @@ const STOCKHOLM_DATA_BBOX = "59.15,17.70,59.50,18.35";
 const NON_PUBLIC_OSM_ACCESS = new Set(["private", "no", "permit", "employees"]);
 const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-v4";
 const AREA_SEARCH_RADIUS_KM = 1.15;
+const FAVORITES_STORAGE_KEY = "parksthlm-favorites-v1";
+const PARKED_CAR_STORAGE_KEY = "parksthlm-parked-car-v1";
+const VEHICLE_PROFILE_STORAGE_KEY = "parksthlm-vehicle-profile-v1";
+
+const VEHICLE_PROFILES: Record<VehicleProfile, { label: string; filter: Category; description: string }> = {
+  car: { label: "Bil", filter: "all", description: "Visar alla parkeringar" },
+  ev: { label: "Elbil", filter: "ev", description: "Visar laddplatser" },
+  mc: { label: "MC", filter: "mc", description: "Visar MC-parkeringar" },
+  disabled: { label: "Rörelsehindrad", filter: "disabled", description: "Visar tillgängliga platser" },
+};
+
+function readLocalStorage<T>(key: string, fallback: T): T {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function isIosDevice() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -150,6 +185,15 @@ function userIcon() {
 function formatDistance(km: number) {
   if (km < 1) return `${Math.max(20, Math.round((km * 1000) / 10) * 10)} m`;
   return `${km.toFixed(1).replace(".", ",")} km`;
+}
+
+function parkedCarIcon() {
+  return L.divIcon({
+    className: "parked-car-marker-wrap",
+    html: '<div class="parked-car-marker"><span>🚙</span><b>MIN BIL</b></div>',
+    iconSize: [76, 58],
+    iconAnchor: [10, 54],
+  });
 }
 
 function formatRouteDistance(meters: number) {
@@ -868,6 +912,7 @@ function App() {
   const searchMarkerLayerRef = useRef<LayerGroup | null>(null);
   const routeLayerRef = useRef<LayerGroup | null>(null);
   const clickLayerRef = useRef<LayerGroup | null>(null);
+  const parkedCarLayerRef = useRef<LayerGroup | null>(null);
   const lastGeocodeRef = useRef(0);
   const lastMcFitCountRef = useRef(0);
   const routeInfoRef = useRef<RouteInfo | null>(null);
@@ -908,6 +953,16 @@ function App() {
   const [pwaInstallOpen, setPwaInstallOpen] = useState(false);
   const [installPlatform, setInstallPlatform] = useState<InstallPlatform | null>(null);
   const [manualInstallHelp, setManualInstallHelp] = useState(false);
+  const [favorites, setFavorites] = useState<ParkingPlace[]>(() => readLocalStorage(FAVORITES_STORAGE_KEY, []));
+  const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [parkedCar, setParkedCar] = useState<ParkedCar | null>(() => readLocalStorage(PARKED_CAR_STORAGE_KEY, null));
+  const [parkedCarOpen, setParkedCarOpen] = useState(false);
+  const [parkedCarEditing, setParkedCarEditing] = useState(false);
+  const [parkedCarNote, setParkedCarNote] = useState("");
+  const [parkedCarSpot, setParkedCarSpot] = useState("");
+  const [vehicleProfile, setVehicleProfile] = useState<VehicleProfile>(() => readLocalStorage(VEHICLE_PROFILE_STORAGE_KEY, "car"));
+  const [vehicleProfileDraft, setVehicleProfileDraft] = useState<VehicleProfile>(() => readLocalStorage(VEHICLE_PROFILE_STORAGE_KEY, "car"));
+  const [vehicleProfileOpen, setVehicleProfileOpen] = useState(false);
 
   // Nya states för Dark Mode, Kartklick och Sökförslag
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("parksthlm-dark") === "true");
@@ -919,6 +974,15 @@ function App() {
   useEffect(() => {
     routeInfoRef.current = routeInfo;
   }, [routeInfo]);
+
+  useEffect(() => {
+    localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(favorites));
+  }, [favorites]);
+
+  useEffect(() => {
+    if (parkedCar) localStorage.setItem(PARKED_CAR_STORAGE_KEY, JSON.stringify(parkedCar));
+    else localStorage.removeItem(PARKED_CAR_STORAGE_KEY);
+  }, [parkedCar]);
 
   // Synka Dark Mode i DOM:en
   useEffect(() => {
@@ -1327,6 +1391,8 @@ function App() {
     map.getPane("taxStreets")!.style.zIndex = "330";
     map.createPane("parking");
     map.getPane("parking")!.style.zIndex = "480";
+    map.createPane("parkedCar");
+    map.getPane("parkedCar")!.style.zIndex = "680";
     map.createPane("charging");
     map.getPane("charging")!.style.zIndex = "470";
     map.createPane("officialStreetRules");
@@ -1390,6 +1456,7 @@ function App() {
     searchMarkerLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     clickLayerRef.current = L.layerGroup().addTo(map);
+    parkedCarLayerRef.current = L.layerGroup().addTo(map);
 
     map.on("click", (event) => {
       const latlng = event.latlng;
@@ -1440,6 +1507,7 @@ function App() {
       searchMarkerLayerRef.current = null;
       routeLayerRef.current = null;
       clickLayerRef.current = null;
+      parkedCarLayerRef.current = null;
     };
   }, []);
 
@@ -1472,6 +1540,24 @@ function App() {
     });
     L.marker(searchPosition, { pane: "parking", icon, title: "Sökt adress" }).addTo(layer);
   }, [searchPosition]);
+
+  useEffect(() => {
+    const layer = parkedCarLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!parkedCar) return;
+    L.marker([parkedCar.lat, parkedCar.lng], {
+      pane: "parkedCar",
+      icon: parkedCarIcon(),
+      keyboard: true,
+      title: "Min parkerade bil",
+    })
+      .on("click", (event) => {
+        L.DomEvent.stopPropagation(event);
+        setParkedCarOpen(true);
+      })
+      .addTo(layer);
+  }, [parkedCar]);
 
   const matchesCategory = useCallback((place: ParkingPlace) => {
     if (category === "all") return true;
@@ -2125,6 +2211,116 @@ function App() {
     mapRef.current?.flyTo([place.lat, place.lng], Math.max(mapRef.current.getZoom(), 15), { duration: 0.8 });
   };
 
+  const isFavorite = (place: ParkingPlace) => favorites.some((favorite) => favorite.id === place.id);
+
+  const toggleFavorite = (place: ParkingPlace) => {
+    if (isFavorite(place)) {
+      setFavorites((current) => current.filter((favorite) => favorite.id !== place.id));
+      showNotice("Parkeringen togs bort från favoriter");
+      return;
+    }
+    setFavorites((current) => [...current, place]);
+    showNotice("Parkeringen sparades som favorit");
+  };
+
+  const showFavorite = (place: ParkingPlace) => {
+    setFavoritesOpen(false);
+    setPanelOpen(false);
+    showParking(place);
+  };
+
+  const shareParking = async (place: ParkingPlace) => {
+    const price = place.free
+      ? "Gratis"
+      : isTariffId(place.tariff)
+        ? `${placeTariffLabel(place)} – ${getCurrentPrice(place.tariff).label}`
+        : place.priceText;
+    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lng}`;
+    const text = `${place.name}\n${place.address}, ${place.area}\n${price}\n${mapsUrl}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: place.name, text });
+        return;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+    }
+    showNotice("Parkeringsinformationen kopierades");
+  };
+
+  const parkedCarCandidate = selectedParking
+    ? { lat: selectedParking.lat, lng: selectedParking.lng, address: `${selectedParking.address}, ${selectedParking.area}`, source: "parking" as const }
+    : userPosition
+      ? { lat: userPosition[0], lng: userPosition[1], address: "Din GPS-position", source: "gps" as const }
+      : clickedPosition
+        ? { lat: clickedPosition[0], lng: clickedPosition[1], address: clickedAddress || "Vald kartposition", source: "map" as const }
+        : searchPosition
+          ? { lat: searchPosition[0], lng: searchPosition[1], address: areaScope?.label || "Sökt position", source: "search" as const }
+          : { lat: viewCenter[0], lng: viewCenter[1], address: "Kartans mittpunkt", source: "map" as const };
+
+  const openParkedCar = (edit = !parkedCar) => {
+    setParkedCarNote(parkedCar?.note ?? "");
+    setParkedCarSpot(parkedCar?.spot ?? "");
+    setParkedCarEditing(edit);
+    setParkedCarOpen(true);
+  };
+
+  const saveParkedCar = () => {
+    setParkedCar({
+      ...parkedCarCandidate,
+      savedAt: Date.now(),
+      note: parkedCarNote.trim(),
+      spot: parkedCarSpot.trim(),
+    });
+    setParkedCarEditing(false);
+    showNotice("Bilens plats sparades");
+  };
+
+  const parkedCarAsPlace = parkedCar ? {
+    id: "saved-parked-car",
+    name: "Min parkerade bil",
+    address: parkedCar.address,
+    area: "Stockholm",
+    lat: parkedCar.lat,
+    lng: parkedCar.lng,
+    kind: "surface" as const,
+    tariff: null,
+    free: false,
+    priceText: "Sparad position",
+    note: parkedCar.note || "Din sparade parkeringsposition.",
+    source: "local" as const,
+  } satisfies ParkingPlace : null;
+
+  const returnToParkedCar = () => {
+    if (!parkedCar) return;
+    setParkedCarOpen(false);
+    setPanelOpen(false);
+    setSelectedParking(null);
+    setSelectedZone(null);
+    setClickedPosition(null);
+    mapRef.current?.flyTo([parkedCar.lat, parkedCar.lng], 17, { duration: 0.8 });
+  };
+
+  const saveVehicleProfile = () => {
+    setVehicleProfile(vehicleProfileDraft);
+    localStorage.setItem(VEHICLE_PROFILE_STORAGE_KEY, JSON.stringify(vehicleProfileDraft));
+    selectCategory(VEHICLE_PROFILES[vehicleProfileDraft].filter);
+    setVehicleProfileOpen(false);
+    showNotice(`${VEHICLE_PROFILES[vehicleProfileDraft].label} sparad – relevant filter är aktivt`);
+  };
+
   const visibleResults = searchMatches.slice(0, query ? 30 : 20);
 
   return (
@@ -2357,6 +2553,15 @@ function App() {
         <button type="button" onClick={saveOffline} className={canInstall ? "install-prompt-button" : offlineReady ? "offline-saved" : ""}>
           <Download size={17} /> <span>{isStandalone ? "Appen installerad" : canInstall ? "Ladda ner appen" : offlineProgress ? "Laddar ner..." : offlineReady ? "Offline redo" : "Spara offline"}</span>
         </button>
+        <button type="button" className="utility-control favorites-control" onClick={() => setFavoritesOpen(true)} aria-label={`Favoriter, ${favorites.length} sparade`} title="Favoriter">
+          <Heart size={17} fill={favorites.length ? "currentColor" : "none"} /> <span>Favoriter{favorites.length ? ` (${favorites.length})` : ""}</span>
+        </button>
+        <button type="button" className={`utility-control parked-control ${parkedCar ? "has-saved-car" : ""}`} onClick={() => parkedCar ? returnToParkedCar() : openParkedCar(true)} aria-label={parkedCar ? "Gå direkt till min parkerade bil" : "Spara var jag parkerade"} title={parkedCar ? "Gå till min bil" : "Var parkerade jag?"}>
+          <CarFront size={17} /> <span>{parkedCar ? "Min bil" : "Spara bil"}</span>
+        </button>
+        <button type="button" className="utility-control profile-control" onClick={() => { setVehicleProfileDraft(vehicleProfile); setVehicleProfileOpen(true); }} aria-label="Fordonsprofil" title="Fordonsprofil">
+          <Settings2 size={17} /> <span>{VEHICLE_PROFILES[vehicleProfile].label}</span>
+        </button>
         <button type="button" onClick={() => setInfoOpen(true)} aria-label="Information"><Info size={18} /></button>
       </div>
 
@@ -2431,6 +2636,13 @@ function App() {
               <button type="button" onClick={() => window.open(`https://waze.com/ul?ll=${selectedParking.lat},${selectedParking.lng}&navigate=yes`, "_blank", "noopener,noreferrer")}>
                 <CarFront size={17} /> Waze
               </button>
+            </div>
+            <div className="place-utility-actions">
+              <button type="button" className={isFavorite(selectedParking) ? "is-favorite" : ""} onClick={() => toggleFavorite(selectedParking)}>
+                <Heart size={17} fill={isFavorite(selectedParking) ? "currentColor" : "none"} /> {isFavorite(selectedParking) ? "Sparad" : "Favorit"}
+              </button>
+              <button type="button" onClick={() => openParkedCar(true)}><CarFront size={17} /> Parkera här</button>
+              <button type="button" onClick={() => void shareParking(selectedParking)}><Share2 size={17} /> Dela</button>
             </div>
           </motion.aside>
         )}
@@ -2517,6 +2729,101 @@ function App() {
               {!routeInfo.arrived && routeInfo.steps[routeInfo.currentStep + 1] ? <em>Nästa: {routeInfo.steps[routeInfo.currentStep + 1].instruction}</em> : null}
             </div>
             <button type="button" onClick={clearRoute} aria-label="Avsluta körläge"><X size={18} /></button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {favoritesOpen && (
+          <motion.div className="modal-backdrop feature-modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setFavoritesOpen(false)}>
+            <motion.section className="info-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="favorites-title" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
+              <button className="sheet-close" type="button" onClick={() => setFavoritesOpen(false)} aria-label="Stäng"><X size={19} /></button>
+              <span className="info-icon favorite-icon"><Heart size={23} fill="currentColor" /></span>
+              <h2 id="favorites-title">Favoritparkeringar</h2>
+              <p>Dina sparade platser finns kvar på den här enheten.</p>
+              {favorites.length ? (
+                <div className="saved-place-list">
+                  {favorites.map((favorite) => (
+                    <div className="saved-place-row" key={favorite.id}>
+                      <button type="button" className="saved-place-main" onClick={() => showFavorite(favorite)}>
+                        <span style={{ "--place-color": placeColor(favorite) } as React.CSSProperties}><ParkingCircle size={17} /></span>
+                        <span><strong>{favorite.name}</strong><small>{favorite.address} · {placeTariffLabel(favorite)}</small></span>
+                        <Navigation size={16} />
+                      </button>
+                      <button type="button" className="saved-place-remove" onClick={() => toggleFavorite(favorite)} aria-label={`Ta bort ${favorite.name}`}><Trash2 size={16} /></button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="feature-empty"><Heart size={27} /><strong>Inga favoriter ännu</strong><span>Öppna en parkering och tryck på Favorit.</span></div>
+              )}
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {parkedCarOpen && (
+          <motion.div className="modal-backdrop feature-modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setParkedCarOpen(false)}>
+            <motion.section className="info-modal feature-modal parked-car-modal" role="dialog" aria-modal="true" aria-labelledby="parked-car-title" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
+              <button className="sheet-close" type="button" onClick={() => setParkedCarOpen(false)} aria-label="Stäng"><X size={19} /></button>
+              <span className="info-icon parked-car-icon"><CarFront size={24} /></span>
+              <h2 id="parked-car-title">Var parkerade jag?</h2>
+              {parkedCar && !parkedCarEditing ? (
+                <>
+                  <p className="saved-car-status"><Clock3 size={15} /> Sparad {new Date(parkedCar.savedAt).toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" })}</p>
+                  <div className="parked-car-details">
+                    <div><small>Plats</small><strong>{parkedCar.address}</strong><span>{parkedCar.lat.toFixed(5)}, {parkedCar.lng.toFixed(5)}</span></div>
+                    {parkedCar.spot && <div><small>Våning / plats</small><strong>{parkedCar.spot}</strong></div>}
+                    {parkedCar.note && <div><small>Anteckning</small><strong>{parkedCar.note}</strong></div>}
+                  </div>
+                  <div className="feature-action-grid">
+                    <button type="button" className="modal-action" onClick={returnToParkedCar}><MapPin size={17} /> Visa på kartan</button>
+                    <button type="button" onClick={() => parkedCarAsPlace && void buildRoute(parkedCarAsPlace)}><Navigation size={17} /> Navigera</button>
+                    <button type="button" onClick={() => setParkedCarEditing(true)}><Save size={17} /> Uppdatera</button>
+                    <button type="button" className="danger-action" onClick={() => { setParkedCar(null); setParkedCarOpen(false); showNotice("Den sparade bilplatsen raderades"); }}><Trash2 size={17} /> Radera</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p>Platsen väljs i ordningen: vald parkering, GPS, vald kartposition, sökt plats och sist kartans mittpunkt.</p>
+                  <div className="candidate-location"><MapPin size={18} /><span><small>Sparas från {parkedCarCandidate.source === "parking" ? "vald parkering" : parkedCarCandidate.source === "gps" ? "GPS" : parkedCarCandidate.source === "search" ? "sökning" : "kartan"}</small><strong>{parkedCarCandidate.address}</strong></span></div>
+                  <div className="feature-form">
+                    <label><span>Våning eller plats <small>valfritt</small></span><input value={parkedCarSpot} onChange={(event) => setParkedCarSpot(event.target.value)} maxLength={40} placeholder="T.ex. plan 2, plats 48" /></label>
+                    <label><span>Anteckning <small>valfritt</small></span><input value={parkedCarNote} onChange={(event) => setParkedCarNote(event.target.value)} maxLength={80} placeholder="T.ex. nära den blå entrén" /></label>
+                  </div>
+                  <div className="modal-actions feature-form-actions">
+                    <button type="button" className="modal-action" onClick={saveParkedCar}><Save size={17} /> Spara bilens plats</button>
+                    {parkedCar && <button type="button" onClick={() => setParkedCarEditing(false)}>Avbryt</button>}
+                  </div>
+                </>
+              )}
+            </motion.section>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {vehicleProfileOpen && (
+          <motion.div className="modal-backdrop feature-modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setVehicleProfileOpen(false)}>
+            <motion.section className="info-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-profile-title" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
+              <button className="sheet-close" type="button" onClick={() => setVehicleProfileOpen(false)} aria-label="Stäng"><X size={19} /></button>
+              <span className="info-icon"><Settings2 size={24} /></span>
+              <h2 id="vehicle-profile-title">Fordonsprofil</h2>
+              <p>Profilen sparas på enheten. Filtret ändras först när du trycker på Spara och använd.</p>
+              <div className="vehicle-profile-grid">
+                {(Object.keys(VEHICLE_PROFILES) as VehicleProfile[]).map((profile) => {
+                  const option = VEHICLE_PROFILES[profile];
+                  return (
+                    <button type="button" key={profile} className={vehicleProfileDraft === profile ? "active" : ""} onClick={() => setVehicleProfileDraft(profile)}>
+                      <span>{profile === "ev" ? <Zap size={20} /> : profile === "mc" ? <Bike size={20} /> : profile === "disabled" ? <Accessibility size={20} /> : <CarFront size={20} />}</span>
+                      <strong>{option.label}</strong><small>{option.description}</small>
+                    </button>
+                  );
+                })}
+              </div>
+              <button type="button" className="modal-action" onClick={saveVehicleProfile}><Settings2 size={17} /> Spara och använd {VEHICLE_PROFILES[vehicleProfileDraft].label}</button>
+            </motion.section>
           </motion.div>
         )}
       </AnimatePresence>
