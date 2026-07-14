@@ -50,7 +50,6 @@ import {
   STOCKHOLM_CENTER,
   TARIFFS,
   TAX_AREAS,
-  TAX_STREETS,
   type LatLng,
   type TariffId,
 } from "./data";
@@ -1387,8 +1386,6 @@ function App() {
     map.getPane("offlineBase")!.style.zIndex = "180";
     map.createPane("taxAreas");
     map.getPane("taxAreas")!.style.zIndex = "310";
-    map.createPane("taxStreets");
-    map.getPane("taxStreets")!.style.zIndex = "330";
     map.createPane("parking");
     map.getPane("parking")!.style.zIndex = "480";
     map.createPane("parkedCar");
@@ -1434,20 +1431,6 @@ function App() {
           setSelectedZone(area.tariff);
         })
         .addTo(taxAreas);
-    });
-
-    const taxStreets = L.layerGroup().addTo(map);
-    TAX_STREETS.forEach((street) => {
-      const color = TARIFFS[street.tariff].color;
-      L.polyline(street.positions, { pane: "taxStreets", color: "#ffffff", weight: 8, opacity: 0.9 }).addTo(taxStreets);
-      L.polyline(street.positions, { pane: "taxStreets", color, weight: 4.5, opacity: 0.94 })
-        .bindTooltip(`${street.name} · Taxa ${street.tariff}`, { sticky: true, className: "street-tooltip" })
-        .on("click", (event) => {
-          L.DomEvent.stopPropagation(event);
-          setSelectedParking(null);
-          setSelectedZone(street.tariff);
-        })
-        .addTo(taxStreets);
     });
 
     parkingLayerRef.current = L.layerGroup().addTo(map);
