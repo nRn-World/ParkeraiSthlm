@@ -78,8 +78,8 @@ const OVERPASS_ENDPOINTS = [
 const OVERPASS_ENDPOINT = OVERPASS_ENDPOINTS[0];
 const STOCKHOLM_DATA_BBOX = "59.15,17.70,59.50,18.35";
 const NON_PUBLIC_OSM_ACCESS = new Set(["private", "no", "permit", "employees"]);
-const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-at-v2";
-const PWA_INSTALL_DISMISSAL_MS = 14 * 24 * 60 * 60 * 1000;
+const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-at-v3";
+const PWA_INSTALL_DISMISSAL_MS = 3 * 24 * 60 * 60 * 1000;
 const AREA_SEARCH_RADIUS_KM = 1.15;
 
 function isIosDevice() {
@@ -617,6 +617,31 @@ async function fetchOverpass(query: string) {
   throw lastError ?? new Error("Overpass kunde inte nås");
 }
 
+function bundledDataUrls(fileName: string) {
+  return Array.from(new Set([
+    `${import.meta.env.BASE_URL}data/${fileName}`,
+    `/data/${fileName}`,
+  ]));
+}
+
+async function fetchJsonWithBundledFallback(apiUrl: string, fileName: string, init?: RequestInit) {
+  try {
+    const response = await fetch(apiUrl, init);
+    if (response.ok && (response.headers.get("content-type") ?? "").includes("json")) return response.json();
+  } catch {
+    // GitHub Pages has no API proxy, so use the bundled public-data snapshot.
+  }
+
+  for (const bundledUrl of bundledDataUrls(fileName)) {
+    const bundledResponse = await fetch(bundledUrl);
+    if (bundledResponse.ok && (bundledResponse.headers.get("content-type") ?? "").includes("json")) {
+      return bundledResponse.json();
+    }
+  }
+
+  throw new Error(`Kunde inte hämta ${fileName}`);
+}
+
 type NobilStation = {
   csmd?: NobilStation;
   id?: string | number;
@@ -971,7 +996,7 @@ function App() {
       if (cachedRaw) {
         try {
           const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-          if (cached.version === 1 && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+          if (cached.version === 2 && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
             return cached.places;
           }
         } catch {
@@ -984,10 +1009,12 @@ function App() {
           lng: String(scope.center[1]),
           radius: String(radiusMeters),
         });
-        const response = await fetch(`/api/stockholm-open-data/${rule}?${params}`);
-        if (!response.ok) return [];
-        const places = parseOfficialRuleParking(await response.json(), rule);
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+        const payload = await fetchJsonWithBundledFallback(
+          `/api/stockholm-open-data/${rule}?${params}`,
+          `${rule}.json`,
+        );
+        const places = parseOfficialRuleParking(payload, rule).filter((place) => isWithinArea(place, scope));
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
         return places;
       } catch {
         return [];
@@ -1000,7 +1027,7 @@ function App() {
     const missingRules = rules.filter((rule) => !loadedGlobalRulesRef.current.has(rule));
     if (missingRules.length === 0) return rules.reduce((sum, rule) => sum + (globalRuleCountsRef.current.get(rule) ?? 0), 0);
     const results = await Promise.all(missingRules.map(async (rule) => {
-      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v1`;
+      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v2`;
       const cachedRaw = localStorage.getItem(cacheKey);
       if (cachedRaw) {
         try {
@@ -1015,9 +1042,11 @@ function App() {
         }
       }
 
-      const response = await fetch(`/api/stockholm-open-data/${rule}?all=true`);
-      if (!response.ok) throw new Error(`Official parking request failed: ${rule}`);
-      const places = parseOfficialRuleParking(await response.json(), rule);
+      const payload = await fetchJsonWithBundledFallback(
+        `/api/stockholm-open-data/${rule}?all=true`,
+        `${rule}.json`,
+      );
+      const places = parseOfficialRuleParking(payload, rule);
       loadedGlobalRulesRef.current.add(rule);
       globalRuleCountsRef.current.set(rule, places.length);
       try {
@@ -1063,13 +1092,13 @@ function App() {
 
   const fetchOcmCharging = useCallback(async () => {
     if (!navigator.onLine) return;
-    const key = "parksthlm-ocm";
+    const key = "parksthlm-ocm-v2";
     const cachedRaw = localStorage.getItem(key);
     let ocmPlaces: ParkingPlace[] | null = null;
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 2 && Array.isArray(cached.places)) {
+        if (cached.version === 3 && Array.isArray(cached.places)) {
           ocmPlaces = cached.places;
           setAllParking((prev) => {
             const injected = prev.map((p) => {
@@ -1085,9 +1114,8 @@ function App() {
       } catch { localStorage.removeItem(key); }
     }
     try {
-      const res = await fetch("/api/open-charge-map");
-      if (!res.ok) return;
-      ocmPlaces = parseOcmParking(await res.json());
+      const payload = await fetchJsonWithBundledFallback("/api/open-charge-map", "open-charge-map.json");
+      ocmPlaces = parseOcmParking(payload);
       setAllParking((prev) => {
         const injected = prev.map((p) => {
           if ((p.evSpaces ?? 0) === 0 || (p.evConnections ?? []).length > 0) return p;
@@ -1098,7 +1126,7 @@ function App() {
         return [...injected, ...ocmPlaces!.filter((o) => !ocmIds.has(o.id))];
       });
       try {
-        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places: ocmPlaces }));
+        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 3, places: ocmPlaces }));
       } catch {
         localStorage.removeItem(key);
       }
@@ -1107,12 +1135,12 @@ function App() {
 
   const fetchNobilCharging = useCallback(async () => {
     if (!navigator.onLine) return;
-    const key = "parksthlm-nobil";
+    const key = "parksthlm-nobil-v2";
     const cachedRaw = localStorage.getItem(key);
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 1 && Array.isArray(cached.places)) {
+        if (cached.version === 2 && Array.isArray(cached.places)) {
           setAllParking((prev) => replaceSource(prev, "nobil", cached.places));
           if (Date.now() - cached.timestamp < 60 * 60 * 1000) return;
         }
@@ -1122,12 +1150,11 @@ function App() {
     }
 
     try {
-      const response = await fetch("/api/nobil", { method: "POST" });
-      if (!response.ok) return;
-      const places = parseNobilParking(await response.json());
+      const payload = await fetchJsonWithBundledFallback("/api/nobil", "nobil.json", { method: "POST" });
+      const places = parseNobilParking(payload);
       setAllParking((prev) => replaceSource(prev, "nobil", places));
       try {
-        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
       } catch {
         localStorage.removeItem(key);
       }
@@ -1155,46 +1182,56 @@ function App() {
   }, [fetchApiParking]);
 
   useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { scope: import.meta.env.BASE_URL }).catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
     const isStandaloneMode = window.matchMedia("(display-mode: standalone)").matches ||
                           (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
     setIsStandalone(isStandaloneMode);
 
     const shouldOfferInstall = isMobileDevice() && !isStandaloneMode && !hasRecentPwaInstallDismissal();
-    if (shouldOfferInstall && isIosDevice()) {
+    const openInstallPrompt = () => {
       setCanInstall(true);
-      setInstallPlatform("ios");
+      setInstallPlatform(isIosDevice() ? "ios" : "android");
       setPwaInstallOpen(true);
+    };
+    let promptFallbackTimer: number | undefined;
+    if (shouldOfferInstall) {
+      openInstallPrompt();
     }
 
     // Check if inline script already captured the event before React mounted
     if ((window as any).__ipp) {
       deferredPromptRef.current = (window as any).__ipp as BeforeInstallPromptEvent;
       setCanInstall(true);
-      if (shouldOfferInstall && !isIosDevice()) {
-        setInstallPlatform("android");
-        setPwaInstallOpen(true);
-      }
     }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       deferredPromptRef.current = e as BeforeInstallPromptEvent;
       setCanInstall(true);
-      if (shouldOfferInstall && !isIosDevice()) {
-        setInstallPlatform("android");
-        setPwaInstallOpen(true);
-      }
+      if (shouldOfferInstall) openInstallPrompt();
+    };
+
+    const handleAppInstalled = () => {
+      deferredPromptRef.current = null;
+      setCanInstall(false);
+      setIsStandalone(true);
+      setPwaInstallOpen(false);
+      showNotice("Appen installerad!");
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    if (shouldOfferInstall) {
+      promptFallbackTimer = window.setTimeout(() => {
+        if (deferredPromptRef.current || isStandaloneMode || hasRecentPwaInstallDismissal()) return;
+        openInstallPrompt();
+      }, 1200);
+    }
 
     return () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+      if (promptFallbackTimer) window.clearTimeout(promptFallbackTimer);
     };
   }, []);
 
@@ -1916,7 +1953,10 @@ function App() {
     }
 
     const prompt = deferredPromptRef.current;
-    if (!prompt) return;
+    if (!prompt) {
+      showNotice("Chrome behöver först göra appen installbar. Vänta en sekund och prova igen.");
+      return;
+    }
 
     await prompt.prompt();
     const { outcome } = await prompt.userChoice;
