@@ -907,6 +907,7 @@ function App() {
   const [isStandalone, setIsStandalone] = useState(false);
   const [pwaInstallOpen, setPwaInstallOpen] = useState(false);
   const [installPlatform, setInstallPlatform] = useState<InstallPlatform | null>(null);
+  const [manualInstallHelp, setManualInstallHelp] = useState(false);
 
   // Nya states för Dark Mode, Kartklick och Sökförslag
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("parksthlm-dark") === "true");
@@ -1243,6 +1244,7 @@ function App() {
     const openInstallPrompt = () => {
       setCanInstall(true);
       setInstallPlatform(isIosDevice() ? "ios" : "android");
+      setManualInstallHelp(false);
       setPwaInstallOpen(true);
     };
     let promptFallbackTimer: number | undefined;
@@ -1260,6 +1262,7 @@ function App() {
       e.preventDefault();
       deferredPromptRef.current = e as BeforeInstallPromptEvent;
       setCanInstall(true);
+      setManualInstallHelp(false);
       if (shouldOfferInstall) openInstallPrompt();
     };
 
@@ -2018,22 +2021,34 @@ function App() {
       return;
     }
 
-    const prompt = deferredPromptRef.current;
-    if (!prompt) {
-      showNotice("Öppna webbläsarens meny och välj Installera app eller Lägg till på hemskärmen.");
+    if (manualInstallHelp) {
+      setPwaInstallOpen(false);
       return;
     }
 
-    await prompt.prompt();
-    const { outcome } = await prompt.userChoice;
-    deferredPromptRef.current = null;
-    setCanInstall(false);
-    setPwaInstallOpen(false);
+    const prompt = deferredPromptRef.current ?? ((window as any).__ipp as BeforeInstallPromptEvent | null);
+    if (!prompt) {
+      setManualInstallHelp(true);
+      return;
+    }
 
-    if (outcome === "accepted") {
-      showNotice("Appen installerad!");
-    } else {
-      localStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, String(Date.now()));
+    try {
+      await prompt.prompt();
+      const { outcome } = await prompt.userChoice;
+      deferredPromptRef.current = null;
+      (window as any).__ipp = null;
+      setCanInstall(false);
+      setPwaInstallOpen(false);
+
+      if (outcome === "accepted") {
+        showNotice("Appen installerad!");
+      } else {
+        sessionStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, "true");
+      }
+    } catch {
+      deferredPromptRef.current = null;
+      (window as any).__ipp = null;
+      setManualInstallHelp(true);
     }
   };
 
@@ -2566,8 +2581,17 @@ function App() {
             >
               <span className="info-icon pwa-install-icon"><Download size={24} /></span>
               <p className="pwa-install-eyebrow">PARKERA I STHLM</p>
-              <h2 id="pwa-install-title">Ha kartan nära till hands</h2>
-              {installPlatform === "android" ? (
+              <h2 id="pwa-install-title">{manualInstallHelp ? "Installera via Chrome-menyn" : "Ha kartan nära till hands"}</h2>
+              {installPlatform === "android" && manualInstallHelp ? (
+                <>
+                  <p>Chrome har inte lämnat något automatiskt installationsanrop. Installera istället direkt från Chrome:</p>
+                  <ol className="pwa-install-steps">
+                    <li><span>1</span><div>Tryck på <strong>⋮</strong> uppe till höger i Chrome.</div></li>
+                    <li><span>2</span><div>Välj <strong>Lägg till på startskärmen</strong> eller <strong>Installera app</strong>.</div></li>
+                    <li><span>3</span><div>Välj <strong>Installera</strong>, inte Skapa genväg.</div></li>
+                  </ol>
+                </>
+              ) : installPlatform === "android" ? (
                 <>
                   <p>Installera Parkera i Sthlm som en riktig webbapp, inte som en vanlig genväg.</p>
                   <ol className="pwa-install-steps">
@@ -2587,7 +2611,7 @@ function App() {
               )}
               <div className="modal-actions pwa-install-actions">
                 <button ref={installActionRef} type="button" className="modal-action" onClick={() => void handlePwaInstall()}>
-                  <Download size={17} /> {installPlatform === "android" ? "Installera appen" : "Jag förstår"}
+                  <Download size={17} /> {manualInstallHelp ? "Fortsätt via Chrome-menyn" : installPlatform === "android" ? "Installera appen" : "Jag förstår"}
                 </button>
                 <button type="button" onClick={dismissPwaInstall}>Inte nu</button>
               </div>

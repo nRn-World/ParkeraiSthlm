@@ -1,5 +1,5 @@
-const APP_CACHE = "park-stockholm-app-v6";
-const MAP_CACHE = "park-stockholm-map-v6";
+const APP_CACHE = "park-stockholm-app-v7";
+const MAP_CACHE = "park-stockholm-map-v7";
 const APP_SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
 self.addEventListener("install", (event) => {
