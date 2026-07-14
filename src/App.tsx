@@ -51,6 +51,7 @@ import {
 
 type Category = "all" | "free" | "garage" | "street" | "disabled" | "ev" | "mc" | TariffId;
 type NavigationStep = { instruction: string; distance: number; location: LatLng };
+type AreaScope = { center: LatLng; label: string; radiusKm: number };
 type RouteInfo = {
   distance: number;
   minutes: number;
@@ -75,21 +76,21 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
 ];
 const OVERPASS_ENDPOINT = OVERPASS_ENDPOINTS[0];
-const STOCKHOLM_BOUNDS = { south: 59.2, west: 17.75, north: 59.43, east: 18.3 };
-const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-at";
-const PWA_INSTALL_DISMISSAL_MS = 14 * 24 * 60 * 60 * 1000;
+const STOCKHOLM_DATA_BBOX = "59.15,17.70,59.50,18.35";
+const NON_PUBLIC_OSM_ACCESS = new Set(["private", "no", "permit", "employees"]);
+const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-v4";
+const AREA_SEARCH_RADIUS_KM = 1.15;
 
 function isIosDevice() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
 
 function isMobileDevice() {
-  return isIosDevice() || /Android/i.test(navigator.userAgent);
+  return isIosDevice() || /Android/i.test(navigator.userAgent) || window.matchMedia("(max-width: 820px)").matches;
 }
 
 function hasRecentPwaInstallDismissal() {
-  const dismissedAt = Number(localStorage.getItem(PWA_INSTALL_DISMISSAL_KEY));
-  return Number.isFinite(dismissedAt) && Date.now() - dismissedAt < PWA_INSTALL_DISMISSAL_MS;
+  return sessionStorage.getItem(PWA_INSTALL_DISMISSAL_KEY) === "true";
 }
 
 function normalize(value: string) {
@@ -121,24 +122,6 @@ function placeKindLabel(place: ParkingPlace) {
   if (place.kind === "garage") return "Parkeringsgarage";
   if (place.kind === "surface") return "Markparkering";
   return "Gatuparkering";
-}
-
-function pointInPolygon(point: LatLng, polygon: LatLng[]) {
-  const [y, x] = point;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [yi, xi] = polygon[i];
-    const [yj, xj] = polygon[j];
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-
-function tariffAt(point: LatLng): TariffId | null {
-  for (const tariff of [1, 2, 3, 4, 5] as TariffId[]) {
-    if (TAX_AREAS.some((area) => area.tariff === tariff && pointInPolygon(point, area.positions))) return tariff;
-  }
-  return null;
 }
 
 function parkingIcon(place: ParkingPlace, selected: boolean) {
@@ -256,6 +239,7 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
 
   return elements.flatMap((element): ParkingPlace[] => {
     const tags = (element.tags || {}) as Record<string, string>;
+    if (NON_PUBLIC_OSM_ACCESS.has(tags.access)) return [];
     const center = element.center as { lat?: number; lon?: number } | undefined;
     const lat = Number(element.lat ?? center?.lat);
     const lng = Number(element.lon ?? center?.lon);
@@ -327,6 +311,7 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
 
 type ApiFacility = {
   Name?: string;
+  Namn?: string;
   Adress?: string;
   AdressLatitud?: number;
   AdressLongitud?: number;
@@ -336,29 +321,88 @@ type ApiFacility = {
   AntalBesokPlatserMc?: number;
   AntalLaddplatserBesokBil?: number;
   AntalLaddplatserBesokMc?: number;
+  GeografisktOmrade?: string;
   Omrade?: string;
+  Besokstaxa?: { Galler?: string; Taxa?: number; Tidsenhet?: string };
   BesokstaxaCollection?: Array<{ Galler?: string; Taxa?: number; Tidsenhet?: string; ParkeringsTypNamn?: string }>;
 };
 
+type StockholmParkingFacility = {
+  id?: string;
+  name?: string;
+  url?: string;
+  location?: { address?: string; areaCode?: string; position?: { latitude?: number; longitude?: number } };
+  visitorTaxes?: Array<{ tax?: number; timeUnit?: string; active?: string; parkingTypeName?: string }>;
+  facilityType?: string;
+  features?: {
+    totalVisitorSpace?: number;
+    totalDisabledSpaces?: number;
+    totalMcVisitorSpaces?: number;
+    loadingSpacesCarVisitors?: number;
+    fastLoadingSpaces?: number;
+  };
+  isVisit?: boolean;
+  isGarage?: boolean;
+  isSurfaceParking?: boolean;
+  facilityNumber?: string;
+};
+
 function parseApiParking(payload: unknown): ParkingPlace[] {
+  const currentFacilities = (payload as { Hits?: StockholmParkingFacility[] } | null)?.Hits;
+  if (Array.isArray(currentFacilities)) {
+    return currentFacilities.flatMap((facility): ParkingPlace[] => {
+      const lat = Number(facility.location?.position?.latitude);
+      const lng = Number(facility.location?.position?.longitude);
+      if (!facility.name || facility.isVisit === false || !Number.isFinite(lat) || !Number.isFinite(lng)) return [];
+      const tax = facility.visitorTaxes?.find((entry) => Number.isFinite(Number(entry.tax)));
+      const free = Number(tax?.tax) === 0;
+      const priceText = free
+        ? "Avgiftsfri enligt Stockholm Parkering"
+        : tax
+          ? `${tax.tax} kr/${tax.timeUnit?.toLowerCase() ?? "timme"}`
+          : "Pris ej rapporterat";
+      const evSpaces = (facility.features?.loadingSpacesCarVisitors ?? 0) + (facility.features?.fastLoadingSpaces ?? 0);
+      return [{
+        id: `api-${facility.facilityNumber ?? facility.id ?? facility.name.replace(/\s+/g, "-")}`,
+        name: facility.name,
+        address: facility.location?.address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+        area: facility.location?.areaCode || "Stockholm",
+        lat,
+        lng,
+        kind: facility.isGarage || normalize(facility.facilityType ?? "").includes("garage") ? "garage" : "surface",
+        tariff: null,
+        free,
+        priceText,
+        note: tax
+          ? `Stockholm Parkering: ${tax.active ?? "se skyltning"}, ${tax.tax} kr/${tax.timeUnit?.toLowerCase() ?? "tim"}.`
+          : "Pris saknas i Stockholm Parkerings aktuella data. Kontrollera skyltningen på plats.",
+        spaces: facility.features?.totalVisitorSpace || undefined,
+        disabledSpaces: facility.features?.totalDisabledSpaces || undefined,
+        mcSpaces: facility.features?.totalMcVisitorSpaces || undefined,
+        evSpaces: evSpaces || undefined,
+        source: "api",
+      }];
+    });
+  }
   if (!Array.isArray(payload)) return [];
   return (payload as ApiFacility[]).flatMap((f): ParkingPlace[] => {
-    if (!f.AdressLatitud || !f.AdressLongitud || !f.Name) return [];
+    const name = f.Namn ?? f.Name;
+    if (!f.AdressLatitud || !f.AdressLongitud || !name) return [];
     const lat = Number(f.AdressLatitud);
     const lng = Number(f.AdressLongitud);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
 
     const totalSpots = f.AntalBesokPlatser ?? 0;
-    const kind = f.Anlaggningstyp === "Garage" ? "garage" : "surface";
-    const tax = f.BesokstaxaCollection?.find((t) => t.Taxa != null);
+    const kind = normalize(f.Anlaggningstyp ?? "").includes("garage") ? "garage" : "surface";
+    const tax = f.BesokstaxaCollection?.find((entry) => entry.Taxa != null) ?? f.Besokstaxa;
     const free = tax?.Taxa === 0;
     const priceText = free ? "Avgiftsfri enligt Stockholm Parkering" : tax ? `${tax.Taxa} kr/${tax.Tidsenhet?.toLowerCase() ?? "timme"}` : "Pris ej rapporterat";
 
     return [{
-      id: `api-${f.Name.replace(/\s+/g, "-")}`,
-      name: f.Name,
+      id: `api-${name.replace(/\s+/g, "-")}`,
+      name,
       address: f.Adress || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-      area: f.Omrade || "Stockholm",
+      area: f.GeografisktOmrade || f.Omrade || "Stockholm",
       lat,
       lng,
       kind,
@@ -473,19 +517,49 @@ type OfficialFeature = {
 };
 
 type OfficialRule = "pmotorcykel" | "prorelsehindrad" | "ptillaten";
-const OFFICIAL_RULES: OfficialRule[] = ["pmotorcykel", "prorelsehindrad", "ptillaten"];
 
-function officialCoordinates(value: unknown): LatLng | null {
-  if (!Array.isArray(value)) return null;
-  if (value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]))) {
-    const [lng, lat] = value.map(Number);
-    return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lat, lng] : null;
+function officialCoordinate(value: unknown): LatLng | null {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const lng = Number(value[0]);
+  const lat = Number(value[1]);
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lat, lng] : null;
+}
+
+function officialLinePositions(value: unknown): LatLng[] {
+  if (!Array.isArray(value)) return [];
+  const directLine = value.map(officialCoordinate);
+  if (directLine.length >= 2 && directLine.every((position): position is LatLng => position !== null)) return directLine;
+
+  return value
+    .map(officialLinePositions)
+    .sort((first, second) => second.length - first.length)[0] ?? [];
+}
+
+function lineMidpoint(positions: LatLng[]): LatLng | null {
+  if (positions.length === 0) return null;
+  if (positions.length === 1) return positions[0];
+
+  const segmentLengths = positions.slice(1).map((position, index) => distanceKm(positions[index], position));
+  const totalLength = segmentLengths.reduce((sum, length) => sum + length, 0);
+  if (totalLength === 0) return positions[0];
+
+  let traversed = 0;
+  for (let index = 0; index < segmentLengths.length; index += 1) {
+    const segmentLength = segmentLengths[index];
+    if (traversed + segmentLength >= totalLength / 2) {
+      const progress = (totalLength / 2 - traversed) / segmentLength;
+      const start = positions[index];
+      const end = positions[index + 1];
+      return [start[0] + (end[0] - start[0]) * progress, start[1] + (end[1] - start[1]) * progress];
+    }
+    traversed += segmentLength;
   }
-  for (const child of value) {
-    const point = officialCoordinates(child);
-    if (point) return point;
-  }
-  return null;
+  return positions[positions.length - 1];
+}
+
+function isWithinArea(place: ParkingPlace, scope: AreaScope) {
+  const positions = place.positions?.length ? place.positions : [[place.lat, place.lng] as LatLng];
+  return positions.some((position) => distanceKm(scope.center, position) <= scope.radiusKm) || distanceKm(scope.center, [place.lat, place.lng]) <= scope.radiusKm;
 }
 
 function officialProperty(properties: Record<string, unknown>, ...names: string[]): string | undefined {
@@ -494,6 +568,34 @@ function officialProperty(properties: Record<string, unknown>, ...names: string[
   );
   const value = matchingName ? properties[matchingName] : undefined;
   return typeof value === "string" || typeof value === "number" ? String(value).trim() || undefined : undefined;
+}
+
+function formatOfficialTime(value: string | undefined): string | undefined {
+  if (!value || !/^\d{1,4}$/.test(value)) return undefined;
+  const paddedValue = value.padStart(4, "0");
+  const hours = Number(paddedValue.slice(0, 2));
+  const minutes = Number(paddedValue.slice(2));
+  if (hours > 23 || minutes > 59) return undefined;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function officialRuleDetails(properties: Record<string, unknown>): string[] {
+  const maxMinutes = officialProperty(properties, "max_minutes");
+  const maxHours = officialProperty(properties, "max_hours");
+  const startTime = formatOfficialTime(officialProperty(properties, "start_time"));
+  const endTime = formatOfficialTime(officialProperty(properties, "end_time"));
+  const dayType = officialProperty(properties, "day_type");
+  const startWeekday = officialProperty(properties, "start_weekday");
+  const details: string[] = [];
+
+  if (maxMinutes) details.push(`Max ${maxMinutes} min`);
+  else if (maxHours) details.push(`Max ${maxHours} tim`);
+
+  const days = [dayType, startWeekday].filter(Boolean).join(", ");
+  if (startTime && endTime) details.push(`${days ? `${days} ` : ""}${startTime}–${endTime}`);
+  else if (days) details.push(days);
+
+  return details;
 }
 
 function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): ParkingPlace[] {
@@ -505,32 +607,42 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
       : Object.values(container).find(Array.isArray) ?? [];
   if (!Array.isArray(features)) return [];
 
-  const isMotorcycle = rule === "pmotorcykel";
-  const isDisabled = rule === "prorelsehindrad";
   return (features as OfficialFeature[]).flatMap((feature, index): ParkingPlace[] => {
     const properties = feature.properties ?? feature as Record<string, unknown>;
     const geometry = feature.geometry ?? properties.geometry as OfficialFeature["geometry"];
-    const point = officialCoordinates(geometry?.coordinates ?? properties.coordinates ?? properties.koordinater);
+    const positions = officialLinePositions(geometry?.coordinates ?? properties.coordinates ?? properties.koordinater);
+    const point = lineMidpoint(positions);
     if (!point) return [];
     const [lat, lng] = point;
     const streetName = officialProperty(properties, "street_name", "gata", "street", "gatunamn");
     const addressValue = officialProperty(properties, "address", "adress");
     const address = addressValue && !/^<.*saknas>$/i.test(addressValue) ? addressValue : streetName;
     const citation = officialProperty(properties, "citation", "föreskrift", "foreskrift");
-    const otherInfo = officialProperty(properties, "other_info", "beskrivning", "description");
+    let otherInfo = officialProperty(properties, "other_info", "beskrivning", "description");
     const tariff = officialProperty(properties, "parking_rate", "avgift", "taxa");
     const placeType = officialProperty(properties, "vf_plats_typ");
+    const vehicle = officialProperty(properties, "vehicle", "fordon");
+    const district = officialProperty(properties, "city_district", "stadsdel");
+    const normalizedPlaceType = normalize(placeType ?? "");
+    const normalizedVehicle = normalize(vehicle ?? "");
+    const isMotorcycle = rule === "pmotorcykel" || normalizedPlaceType.includes("motorcykel") || normalizedVehicle.includes("motorcykel");
+    const isDisabled = rule === "prorelsehindrad" || normalizedPlaceType.includes("rorelsehindrad") || normalizedVehicle.includes("rorelsehindrad");
     const isFree = /^avgiftsfri\b/i.test(tariff ?? "");
+    const tariffMatch = normalize(tariff ?? "").match(/\btaxa\s*([1-5])\b/);
+    const tariffId = tariffMatch ? Number(tariffMatch[1]) as TariffId : null;
+    const restrictionDetails = officialRuleDetails(properties);
+    otherInfo = [...restrictionDetails, otherInfo].filter(Boolean).join(" · ") || undefined;
     const identifier = String(feature.id ?? officialProperty(properties, "id", "objectid", "feature_object_id", "fid") ?? `${lat}-${lng}-${index}`);
     return [{
       id: `stockholm-open-data-${rule}-${identifier}`,
       name: isMotorcycle ? "MC-parkering" : isDisabled ? "Parkering för rörelsehindrade" : placeType || "Gatuparkering",
       address: address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
-      area: "Stockholms stad",
+      area: district ? `Stockholms stad · ${district}` : "Stockholms stad",
       lat,
       lng,
+      positions,
       kind: "street",
-      tariff: null,
+      tariff: tariffId,
       free: isFree,
       priceText: tariff == null ? "Taxa ej rapporterad i föreskriften" : `Taxa enligt Stockholms stad: ${String(tariff)}`,
       note: [citation && `Föreskrift: ${citation}`, otherInfo].filter(Boolean).join(" · ") || (isMotorcycle
@@ -559,16 +671,29 @@ async function fetchOverpass(query: string) {
   throw lastError ?? new Error("Overpass kunde inte nås");
 }
 
-function parkingTileQueries() {
-  const latSteps = [59.2, 59.28, 59.36, 59.43];
-  const lngSteps = [17.75, 17.89, 18.03, 18.17, 18.3];
-  const queries: string[] = [];
-  for (let latIndex = 0; latIndex < latSteps.length - 1; latIndex += 1) {
-    for (let lngIndex = 0; lngIndex < lngSteps.length - 1; lngIndex += 1) {
-      queries.push(`[out:json][timeout:55];nwr["amenity"="parking"](${latSteps[latIndex]},${lngSteps[lngIndex]},${latSteps[latIndex + 1]},${lngSteps[lngIndex + 1]});out center tags;`);
+function bundledDataUrls(fileName: string) {
+  return Array.from(new Set([
+    `${import.meta.env.BASE_URL}data/${fileName}`,
+    `/data/${fileName}`,
+  ]));
+}
+
+async function fetchJsonWithBundledFallback(apiUrl: string, fileName: string, init?: RequestInit) {
+  try {
+    const response = await fetch(apiUrl, init);
+    if (response.ok && (response.headers.get("content-type") ?? "").includes("json")) return response.json();
+  } catch {
+    // GitHub Pages has no API proxy, so use the bundled public-data snapshot.
+  }
+
+  for (const bundledUrl of bundledDataUrls(fileName)) {
+    const bundledResponse = await fetch(bundledUrl);
+    if (bundledResponse.ok && (bundledResponse.headers.get("content-type") ?? "").includes("json")) {
+      return bundledResponse.json();
     }
   }
-  return queries;
+
+  throw new Error(`Kunde inte hämta ${fileName}`);
 }
 
 type NobilStation = {
@@ -644,31 +769,127 @@ function replaceSource(places: ParkingPlace[], source: ParkingPlace["source"], i
   return [...places.filter((place) => place.source !== source), ...incoming];
 }
 
+function mergePlacesById(places: ParkingPlace[], incoming: ParkingPlace[]) {
+  const merged = new Map(places.map((place) => [place.id, place]));
+  incoming.forEach((place) => merged.set(place.id, place));
+  return [...merged.values()];
+}
+
+function replaceOfficialRules(places: ParkingPlace[], rules: OfficialRule[], incoming: ParkingPlace[]) {
+  const prefixes = rules.map((rule) => `stockholm-open-data-${rule}-`);
+  return [...places.filter((place) => !prefixes.some((prefix) => place.id.startsWith(prefix))), ...incoming];
+}
+
+function parkingRecordScore(place: ParkingPlace) {
+  const sourceScore = place.source === "api" ? 5 : place.source === "local" ? 4 : place.source === "ocm" ? 3 : place.source === "nobil" ? 2 : 1;
+  const priceScore = /ej verifierat|ej rapporterat|saknas/i.test(place.priceText) ? 0 : 3;
+  const addressScore = /^[-\d.]+,\s*[-\d.]+$/.test(place.address) || normalize(place.address) === normalize(place.name) ? 0 : 2;
+  return sourceScore + priceScore + addressScore + (place.spaces ? 1 : 0);
+}
+
+function mergeDuplicateParking(first: ParkingPlace, second: ParkingPlace): ParkingPlace {
+  const preferred = parkingRecordScore(second) > parkingRecordScore(first) ? second : first;
+  const other = preferred === first ? second : first;
+  return {
+    ...other,
+    ...preferred,
+    spaces: Math.max(first.spaces ?? 0, second.spaces ?? 0) || undefined,
+    disabledSpaces: Math.max(first.disabledSpaces ?? 0, second.disabledSpaces ?? 0) || undefined,
+    mcSpaces: Math.max(first.mcSpaces ?? 0, second.mcSpaces ?? 0) || undefined,
+    evSpaces: Math.max(first.evSpaces ?? 0, second.evSpaces ?? 0) || undefined,
+    evConnections: (preferred.evConnections?.length ?? 0) >= (other.evConnections?.length ?? 0) ? preferred.evConnections : other.evConnections,
+  };
+}
+
+function dedupeDisplayParking(places: ParkingPlace[], category: Category) {
+  if (!(["all", "garage", "ev"] as Category[]).includes(category)) return places;
+  const result: ParkingPlace[] = [];
+  const groupedIndexes = new Map<string, number>();
+
+  places.forEach((place) => {
+    let key: string | null = null;
+    if (place.kind === "garage" || category === "garage") {
+      const baseName = normalize(place.name)
+        .replace(/\b(p[- ]?hus|parkeringshus|parkeringsgarage|garage|parkering|entre|norr|soder|oster|vaster|norra|sodra|ostra|vastra)\b/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      key = `garage:${baseName.length > 3 ? baseName : `${place.lat.toFixed(3)}:${place.lng.toFixed(3)}`}`;
+    } else if ((place.evSpaces ?? 0) > 0) {
+      key = `ev:${place.lat.toFixed(4)}:${place.lng.toFixed(4)}`;
+    }
+
+    if (!key) {
+      result.push(place);
+      return;
+    }
+    const existingIndex = groupedIndexes.get(key);
+    if (existingIndex == null) {
+      groupedIndexes.set(key, result.length);
+      result.push(place);
+      return;
+    }
+    result[existingIndex] = mergeDuplicateParking(result[existingIndex], place);
+  });
+
+  return result;
+}
+
+function addNearbyStreetAddresses(places: ParkingPlace[]): ParkingPlace[] {
+  const streetRules = places.filter((place) => place.source === "stockholm-open-data" && place.kind === "street" && !/^[-\d.]+,\s*[-\d.]+$/.test(place.address));
+  if (streetRules.length === 0) return places;
+
+  let changed = false;
+  const enriched = places.map((place) => {
+    if (place.source !== "osm" || !/^[-\d.]+,\s*[-\d.]+$/.test(place.address)) return place;
+    const nearestStreet = streetRules.reduce<ParkingPlace | undefined>((closest, street) => {
+      if (!closest) return street;
+      return distanceKm([place.lat, place.lng], [street.lat, street.lng]) < distanceKm([place.lat, place.lng], [closest.lat, closest.lng])
+        ? street
+        : closest;
+    }, undefined);
+    if (!nearestStreet || distanceKm([place.lat, place.lng], [nearestStreet.lat, nearestStreet.lng]) > 0.08) return place;
+    changed = true;
+    return {
+      ...place,
+      address: `Nära ${nearestStreet.address}`,
+      area: nearestStreet.area,
+    };
+  });
+
+  return changed ? enriched : places;
+}
+
 function App() {
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const parkingLayerRef = useRef<LayerGroup | null>(null);
+  const streetRuleLayerRef = useRef<LayerGroup | null>(null);
   const locationLayerRef = useRef<LayerGroup | null>(null);
+  const searchMarkerLayerRef = useRef<LayerGroup | null>(null);
   const routeLayerRef = useRef<LayerGroup | null>(null);
   const clickLayerRef = useRef<LayerGroup | null>(null);
   const lastGeocodeRef = useRef(0);
   const lastMcFitCountRef = useRef(0);
-  const officialRuleParkingRef = useRef<Partial<Record<OfficialRule, ParkingPlace[]>>>({});
   const routeInfoRef = useRef<RouteInfo | null>(null);
   const lastRerouteRef = useRef(0);
   const deferredPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const installActionRef = useRef<HTMLButtonElement>(null);
+  const loadedGlobalRulesRef = useRef(new Set<OfficialRule>());
+  const globalRuleCountsRef = useRef(new Map<OfficialRule, number>());
+  const loadedGlobalOsmRef = useRef(new Set<"garage" | "free">());
 
   const [allParking, setAllParking] = useState<ParkingPlace[]>(LOCAL_PARKING);
   const [category, setCategory] = useState<Category>("all");
   const [query, setQuery] = useState("");
   const [searchLocations, setSearchLocations] = useState<SearchLocation[]>([]);
   const [searching, setSearching] = useState(false);
-  const [dataLoading, setDataLoading] = useState(false);
+  const [areaLoading, setAreaLoading] = useState(false);
   const [selectedParking, setSelectedParking] = useState<ParkingPlace | null>(null);
   const [selectedZone, setSelectedZone] = useState<TariffId | null>(null);
   const [userPosition, setUserPosition] = useState<LatLng | null>(null);
   const [searchPosition, setSearchPosition] = useState<LatLng | null>(null);
+  const [areaScope, setAreaScope] = useState<AreaScope | null>(null);
+  const [limitToArea, setLimitToArea] = useState(false);
   const [viewCenter, setViewCenter] = useState<LatLng>(STOCKHOLM_CENTER);
   const [mapZoom, setMapZoom] = useState(13);
   const [locating, setLocating] = useState(false);
@@ -732,50 +953,70 @@ function App() {
     window.setTimeout(() => setNotice(null), 3600);
   }, []);
 
-  const fetchOsmParking = useCallback(async (force = false) => {
-    const CACHE_VERSION = 6;
-    const cachedRaw = localStorage.getItem("parksthlm-osm");
-    if (cachedRaw && !force) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version !== CACHE_VERSION) throw new Error("cache-version-mismatch");
-        if (Array.isArray(cached.places)) setAllParking((prev) => replaceSource(prev, "osm", cached.places));
-        if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
-      } catch {
-        localStorage.removeItem("parksthlm-osm");
-      }
-    }
+  const fetchNearbyOsmParking = useCallback(async (scope: AreaScope) => {
     if (!navigator.onLine) return;
+    const [lat, lng] = scope.center;
+    const around = `around:${Math.round(scope.radiusKm * 1000)},${lat},${lng}`;
+    const query = `[out:json][timeout:55];(nwr["amenity"="parking"](${around});nwr["amenity"="parking_entrance"](${around});nwr["amenity"="parking_space"](${around});nwr["amenity"="charging_station"](${around}););out center tags;`;
+    const payload = await fetchOverpass(query);
+    const byId = new Map<string, ParkingPlace>();
+    parseOsmParking(payload).forEach((place) => byId.set(place.id, place));
+    setAllParking((previous) => mergePlacesById(previous, [...byId.values()]));
+  }, []);
 
-    setDataLoading(true);
-    try {
-      const payloads: unknown[] = [];
-      const queries = parkingTileQueries();
-      for (let index = 0; index < queries.length; index += 3) {
-        const batch = await Promise.allSettled(queries.slice(index, index + 3).map(fetchOverpass));
-        payloads.push(...batch.flatMap((result) => result.status === "fulfilled" ? [result.value] : []));
+  const fetchGlobalOsmParking = useCallback(async (dataset: "garage" | "free") => {
+    if (!navigator.onLine) return 0;
+    if (loadedGlobalOsmRef.current.has(dataset)) return 0;
+    const cacheKey = `parksthlm-osm-${dataset}-stockholm-v2`;
+    const cachedRaw = localStorage.getItem(cacheKey);
+    if (cachedRaw) {
+      try {
+        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[] };
+        if (Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+          setAllParking((previous) => mergePlacesById(previous, cached.places));
+          loadedGlobalOsmRef.current.add(dataset);
+          return cached.places.length;
+        }
+      } catch {
+        localStorage.removeItem(cacheKey);
       }
-      if (payloads.length === 0) throw new Error("Kunde inte hämta parkeringsdata");
-      const byId = new Map<string, ParkingPlace>();
-      payloads.flatMap(parseOsmParking).forEach((place) => byId.set(place.id, place));
-      const places = [...byId.values()];
-      localStorage.setItem("parksthlm-osm", JSON.stringify({ timestamp: Date.now(), version: CACHE_VERSION, places }));
-      setAllParking((prev) => replaceSource(prev, "osm", places));
-      if (force) showNotice(`${places.length} parkeringsplatser uppdaterades`);
-    } catch {
-      if (force) showNotice("Live-data kunde inte nås. Sparad data används.");
-    } finally {
-      setDataLoading(false);
     }
-  }, [showNotice]);
+
+    const query = dataset === "garage"
+      ? `[out:json][timeout:120];(nwr["amenity"="parking"]["parking"~"underground|multi-storey|garage"](${STOCKHOLM_DATA_BBOX});nwr["amenity"="parking"]["building"="parking"](${STOCKHOLM_DATA_BBOX});nwr["amenity"="parking_entrance"]["parking"~"underground|multi-storey|garage"](${STOCKHOLM_DATA_BBOX});nwr["amenity"="parking"]["fee"="yes"]["name"](${STOCKHOLM_DATA_BBOX});nwr["amenity"="parking"]["fee"="yes"]["operator"](${STOCKHOLM_DATA_BBOX}););out center tags;`
+      : `[out:json][timeout:120];nwr["amenity"="parking"]["fee"="no"](${STOCKHOLM_DATA_BBOX});out center tags;`;
+    const payload = await fetchOverpass(query);
+    const sourceElements = payload && typeof payload === "object" && "elements" in payload
+      ? (payload as { elements?: Array<Record<string, unknown>> }).elements ?? []
+      : [];
+    const publicPayload = dataset === "garage"
+      ? {
+          elements: sourceElements.filter((element) => {
+            const tags = (element.tags ?? {}) as Record<string, string>;
+            return ["yes", "customers", "permissive", "destination"].includes(tags.access) || ["yes", "no"].includes(tags.fee);
+          }),
+        }
+      : payload;
+    const places = parseOsmParking(publicPayload).filter((place) => dataset === "garage"
+      ? place.kind === "garage" || (place.kind === "surface" && place.name !== "Parkering" && place.priceText === "Avgift enligt OpenStreetMap")
+      : place.free);
+    setAllParking((previous) => mergePlacesById(previous, places));
+    loadedGlobalOsmRef.current.add(dataset);
+    try {
+      localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), places }));
+    } catch {
+      localStorage.removeItem(cacheKey);
+    }
+    return places.length;
+  }, []);
 
   const fetchApiParking = useCallback(async (force = false) => {
-    const CACHE_KEY = "parksthlm-api";
+    const CACHE_KEY = "parksthlm-api-v4";
     const cachedRaw = localStorage.getItem(CACHE_KEY);
     if (cachedRaw && !force) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version !== 2) throw new Error("cache-version");
+        if (cached.version !== 4) throw new Error("cache-version");
         if (Array.isArray(cached.places)) setAllParking((prev) => replaceSource(prev, "api", cached.places));
         if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
       } catch {
@@ -784,161 +1025,133 @@ function App() {
     }
     if (!navigator.onLine) return;
     try {
-      const response = await fetch("/api/stockholm-parking");
-      if (!response.ok) throw new Error("Kunde inte hämta infartsparkeringar");
-      const places = parseApiParking(await response.json());
-      localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
+      const payload = await fetchJsonWithBundledFallback("/api/stockholm-parking", "stockholm-parking.json");
+      const places = parseApiParking(payload);
       setAllParking((prev) => replaceSource(prev, "api", places));
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), version: 4, places }));
+      } catch {
+        localStorage.removeItem(CACHE_KEY);
+      }
       if (force) showNotice(places.length + " infartsparkeringar uppdaterades");
     } catch {
       if (force) showNotice("Infartsparkeringar kunde inte nås. Sparad data används.");
     }
   }, [showNotice]);
 
-  const fetchDisabledParking = useCallback(async () => {
+  const fetchOfficialRuleParking = useCallback(async (rules: OfficialRule[], scope: AreaScope) => {
     if (!navigator.onLine) return;
-    const key = "parksthlm-disabled";
-    const cachedRaw = localStorage.getItem(key);
-    if (cachedRaw) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 2 && Array.isArray(cached.places)) {
-          setAllParking((prev) => {
-            const existingIds = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
-            return [...prev.filter((p) => p.source !== "osm-disabled"), ...cached.places.filter((p) => !existingIds.has(p.id))];
-          });
-          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
+    const radiusMeters = Math.round(scope.radiusKm * 1000);
+    const scopeKey = `${scope.center[0].toFixed(3)}-${scope.center[1].toFixed(3)}-${radiusMeters}`;
+    const results = await Promise.all(rules.map(async (rule): Promise<ParkingPlace[]> => {
+      const cacheKey = `parksthlm-stockholm-open-data-${rule}-${scopeKey}`;
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
+          if (cached.version === 2 && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+            return cached.places;
+          }
+        } catch {
+          localStorage.removeItem(cacheKey);
         }
-      } catch { localStorage.removeItem(key); }
-    }
-    try {
-      const q = "[out:json][timeout:55];area[\"name\"=\"Stockholm\"][\"admin_level\"=\"7\"]->.s;(nwr[\"amenity\"=\"parking_space\"][\"disabled\"=\"yes\"](area.s);nwr[\"amenity\"=\"parking\"][\"capacity:disabled\"](area.s);nwr[\"amenity\"=\"parking\"][\"disabled:capacity\"](area.s);nwr[\"amenity\"=\"parking\"][\"disabled\"](area.s);nwr[\"amenity\"=\"parking\"][~\"^.*disabled.*$\"~\".\"](area.s););out center tags(3000);";
-      const res = await fetch(OVERPASS_ENDPOINT + "?data=" + encodeURIComponent(q));
-      if (!res.ok) return;
-      const places = parseOsmParking(await res.json()).filter((p) => (p.disabledSpaces ?? 0) > 0).slice(0, 3000);
-      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
-      setAllParking((prev) => {
-        const existingIds = new Set(prev.filter((p) => p.source !== "osm-disabled").map((p) => p.id));
-        return [...prev.filter((p) => p.source !== "osm-disabled"), ...places.filter((p) => !existingIds.has(p.id))];
-      });
-    } catch { /* silent */ }
-  }, []);
-
-  const fetchVerifiedRuleParking = useCallback(async () => {
-    if (!navigator.onLine) return;
-    const key = "parksthlm-verified-rules";
-    const cachedRaw = localStorage.getItem(key);
-    if (cachedRaw) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 2 && Array.isArray(cached.places)) {
-          setAllParking((prev) => {
-            const existingIds = new Set(prev.map((place) => place.id));
-            return [...prev, ...cached.places.filter((place) => !existingIds.has(place.id))];
-          });
-          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
-        }
-      } catch {
-        localStorage.removeItem(key);
       }
-    }
-
-    const bounds = `${STOCKHOLM_BOUNDS.south},${STOCKHOLM_BOUNDS.west},${STOCKHOLM_BOUNDS.north},${STOCKHOLM_BOUNDS.east}`;
-    const queries = [
-      `[out:json][timeout:60];nwr["amenity"="parking"]["fee"="no"](${bounds});out center tags;`,
-      `[out:json][timeout:60];(nwr["amenity"="parking_space"]["disabled"](${bounds});nwr["amenity"="parking"]["capacity:disabled"](${bounds});nwr["amenity"="parking"]["disabled:capacity"](${bounds}););out center tags;`,
-    ];
-
-    try {
-      const payloads = await Promise.all(queries.map(fetchOverpass));
-      const byId = new Map<string, ParkingPlace>();
-      payloads.flatMap(parseOsmParking).forEach((place) => byId.set(place.id, place));
-      const places = [...byId.values()];
-      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
-      setAllParking((prev) => {
-        const existingIds = new Set(prev.map((place) => place.id));
-        return [...prev, ...places.filter((place) => !existingIds.has(place.id))];
-      });
-    } catch {
-      // The map retains any cached rule data when Overpass is temporarily unavailable.
-    }
+      try {
+        const params = new URLSearchParams({
+          lat: String(scope.center[0]),
+          lng: String(scope.center[1]),
+          radius: String(radiusMeters),
+        });
+        const payload = await fetchJsonWithBundledFallback(
+          `/api/stockholm-open-data/${rule}?${params}`,
+          `${rule}.json`,
+        );
+        const places = parseOfficialRuleParking(payload, rule).filter((place) => isWithinArea(place, scope));
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
+        return places;
+      } catch {
+        return [];
+      }
+    }));
+    setAllParking((previous) => mergePlacesById(previous, results.flat()));
   }, []);
 
-  const fetchOfficialRuleParking = useCallback(async () => {
-    if (!navigator.onLine) return;
-    const cacheKey = "parksthlm-stockholm-open-data";
-    const replaceOfficialData = () => {
-      const places = OFFICIAL_RULES.flatMap((rule) => officialRuleParkingRef.current[rule] ?? []);
-      localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 3, places }));
-      setAllParking((prev) => replaceSource(prev, "stockholm-open-data", places));
-    };
-
-    const cachedRaw = localStorage.getItem(cacheKey);
-    if (cachedRaw) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 3 && Array.isArray(cached.places)) {
-          OFFICIAL_RULES.forEach((rule) => {
-            officialRuleParkingRef.current[rule] = cached.places.filter((place) => place.id.startsWith(`stockholm-open-data-${rule}-`));
-          });
-          setAllParking((prev) => replaceSource(prev, "stockholm-open-data", cached.places));
-          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
+  const fetchAllOfficialRuleParking = useCallback(async (rules: OfficialRule[]) => {
+    const missingRules = rules.filter((rule) => !loadedGlobalRulesRef.current.has(rule));
+    if (missingRules.length === 0) return rules.reduce((sum, rule) => sum + (globalRuleCountsRef.current.get(rule) ?? 0), 0);
+    const results = await Promise.all(missingRules.map(async (rule) => {
+      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v2`;
+      const cachedRaw = localStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        try {
+          const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[] };
+          if (Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+            loadedGlobalRulesRef.current.add(rule);
+            globalRuleCountsRef.current.set(rule, cached.places.length);
+            return cached.places;
+          }
+        } catch {
+          localStorage.removeItem(cacheKey);
         }
+      }
+
+      const payload = await fetchJsonWithBundledFallback(
+        `/api/stockholm-open-data/${rule}?all=true`,
+        `${rule}.json`,
+      );
+      const places = parseOfficialRuleParking(payload, rule);
+      loadedGlobalRulesRef.current.add(rule);
+      globalRuleCountsRef.current.set(rule, places.length);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), places }));
       } catch {
         localStorage.removeItem(cacheKey);
       }
-    }
-
-    await Promise.all(OFFICIAL_RULES.map(async (rule) => {
-      try {
-        const response = await fetch(`/api/stockholm-open-data/${rule}`);
-        if (!response.ok) return;
-        officialRuleParkingRef.current[rule] = parseOfficialRuleParking(await response.json(), rule);
-        replaceOfficialData();
-      } catch {
-        // A slow or unavailable rule layer must not hide successfully loaded MC parking.
-      }
+      return places;
     }));
+    const places = results.flat();
+    setAllParking((previous) => replaceOfficialRules(previous, missingRules, places));
+    return rules.reduce((sum, rule) => sum + (globalRuleCountsRef.current.get(rule) ?? 0), 0);
   }, []);
 
   const fetchEvCharging = useCallback(async () => {
     if (!navigator.onLine) return;
-    const key = "parksthlm-ev";
+    const key = "parksthlm-ev-v3";
     const cachedRaw = localStorage.getItem(key);
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
         if (cached.version === 2 && Array.isArray(cached.places)) {
-          setAllParking((prev) => {
-            const existingIds = new Set(prev.filter((p) => p.source !== "osm-ev").map((p) => p.id));
-            return [...prev.filter((p) => p.source !== "osm-ev"), ...cached.places.filter((p) => !existingIds.has(p.id))];
-          });
+          setAllParking((prev) => replaceSource(prev, "osm-ev", cached.places));
           if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
         }
       } catch { localStorage.removeItem(key); }
     }
     try {
-      const q = "[out:json][timeout:55];area[\"name\"=\"Stockholm\"][\"admin_level\"=\"7\"]->.s;nwr[\"amenity\"=\"charging_station\"](area.s);out center tags(3000);";
+      const q = `[out:json][timeout:120];nwr["amenity"="charging_station"](${STOCKHOLM_DATA_BBOX});out center tags;`;
       const res = await fetch(OVERPASS_ENDPOINT + "?data=" + encodeURIComponent(q));
       if (!res.ok) return;
-      const places = parseOsmParking(await res.json()).filter((p) => (p.evSpaces ?? 0) > 0).slice(0, 3000);
-      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
-      setAllParking((prev) => {
-        const existingIds = new Set(prev.filter((p) => p.source !== "osm-ev").map((p) => p.id));
-        return [...prev.filter((p) => p.source !== "osm-ev"), ...places.filter((p) => !existingIds.has(p.id))];
-      });
+      const places = parseOsmParking(await res.json())
+        .filter((place) => (place.evSpaces ?? 0) > 0)
+        .map((place): ParkingPlace => ({ ...place, source: "osm-ev" }));
+      try {
+        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
+      } catch {
+        localStorage.removeItem(key);
+      }
+      setAllParking((prev) => replaceSource(prev, "osm-ev", places));
     } catch { /* silent */ }
   }, []);
 
   const fetchOcmCharging = useCallback(async () => {
     if (!navigator.onLine) return;
-    const key = "parksthlm-ocm";
+    const key = "parksthlm-ocm-v2";
     const cachedRaw = localStorage.getItem(key);
     let ocmPlaces: ParkingPlace[] | null = null;
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 2 && Array.isArray(cached.places)) {
+        if (cached.version === 3 && Array.isArray(cached.places)) {
           ocmPlaces = cached.places;
           setAllParking((prev) => {
             const injected = prev.map((p) => {
@@ -954,10 +1167,8 @@ function App() {
       } catch { localStorage.removeItem(key); }
     }
     try {
-      const res = await fetch("/api/open-charge-map");
-      if (!res.ok) return;
-      ocmPlaces = parseOcmParking(await res.json());
-      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places: ocmPlaces }));
+      const payload = await fetchJsonWithBundledFallback("/api/open-charge-map", "open-charge-map.json");
+      ocmPlaces = parseOcmParking(payload);
       setAllParking((prev) => {
         const injected = prev.map((p) => {
           if ((p.evSpaces ?? 0) === 0 || (p.evConnections ?? []).length > 0) return p;
@@ -967,17 +1178,22 @@ function App() {
         const ocmIds = new Set(prev.map((p) => p.id));
         return [...injected, ...ocmPlaces!.filter((o) => !ocmIds.has(o.id))];
       });
+      try {
+        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 3, places: ocmPlaces }));
+      } catch {
+        localStorage.removeItem(key);
+      }
     } catch { /* silent */ }
   }, []);
 
   const fetchNobilCharging = useCallback(async () => {
     if (!navigator.onLine) return;
-    const key = "parksthlm-nobil";
+    const key = "parksthlm-nobil-v2";
     const cachedRaw = localStorage.getItem(key);
     if (cachedRaw) {
       try {
         const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 1 && Array.isArray(cached.places)) {
+        if (cached.version === 2 && Array.isArray(cached.places)) {
           setAllParking((prev) => replaceSource(prev, "nobil", cached.places));
           if (Date.now() - cached.timestamp < 60 * 60 * 1000) return;
         }
@@ -987,38 +1203,27 @@ function App() {
     }
 
     try {
-      const response = await fetch("/api/nobil", { method: "POST" });
-      if (!response.ok) return;
-      const places = parseNobilParking(await response.json());
-      localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 1, places }));
+      const payload = await fetchJsonWithBundledFallback("/api/nobil", "nobil.json", { method: "POST" });
+      const places = parseNobilParking(payload);
       setAllParking((prev) => replaceSource(prev, "nobil", places));
+      try {
+        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
+      } catch {
+        localStorage.removeItem(key);
+      }
     } catch {
       // Cached NOBIL data is retained if the provider cannot be reached.
     }
   }, []);
 
   useEffect(() => {
-    void fetchOsmParking();
     void fetchApiParking();
-    void fetchDisabledParking();
-    void fetchVerifiedRuleParking();
-    void fetchOfficialRuleParking();
-    void fetchEvCharging();
-    void fetchOcmCharging();
-    void fetchNobilCharging();
-  }, [fetchOsmParking, fetchApiParking, fetchDisabledParking, fetchVerifiedRuleParking, fetchOfficialRuleParking, fetchEvCharging, fetchOcmCharging, fetchNobilCharging]);
+  }, [fetchApiParking]);
 
   useEffect(() => {
     const handleOnline = () => {
       setOnline(true);
-      void fetchOsmParking();
       void fetchApiParking();
-      void fetchDisabledParking();
-      void fetchVerifiedRuleParking();
-      void fetchOfficialRuleParking();
-      void fetchEvCharging();
-      void fetchOcmCharging();
-      void fetchNobilCharging();
     };
     const handleOffline = () => setOnline(false);
     window.addEventListener("online", handleOnline);
@@ -1027,12 +1232,7 @@ function App() {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [fetchOsmParking, fetchApiParking, fetchDisabledParking, fetchVerifiedRuleParking, fetchOfficialRuleParking, fetchEvCharging, fetchOcmCharging, fetchNobilCharging]);
-
-  useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("sw.js").catch(() => undefined);
-  }, []);
+  }, [fetchApiParking]);
 
   useEffect(() => {
     const isStandaloneMode = window.matchMedia("(display-mode: standalone)").matches ||
@@ -1040,35 +1240,51 @@ function App() {
     setIsStandalone(isStandaloneMode);
 
     const shouldOfferInstall = isMobileDevice() && !isStandaloneMode && !hasRecentPwaInstallDismissal();
-    if (shouldOfferInstall && isIosDevice()) {
-      setInstallPlatform("ios");
+    const openInstallPrompt = () => {
+      setCanInstall(true);
+      setInstallPlatform(isIosDevice() ? "ios" : "android");
       setPwaInstallOpen(true);
+    };
+    let promptFallbackTimer: number | undefined;
+    if (shouldOfferInstall) {
+      openInstallPrompt();
     }
 
     // Check if inline script already captured the event before React mounted
     if ((window as any).__ipp) {
       deferredPromptRef.current = (window as any).__ipp as BeforeInstallPromptEvent;
       setCanInstall(true);
-      if (shouldOfferInstall && !isIosDevice()) {
-        setInstallPlatform("android");
-        setPwaInstallOpen(true);
-      }
     }
 
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       deferredPromptRef.current = e as BeforeInstallPromptEvent;
       setCanInstall(true);
-      if (shouldOfferInstall && !isIosDevice()) {
-        setInstallPlatform("android");
-        setPwaInstallOpen(true);
-      }
+      if (shouldOfferInstall) openInstallPrompt();
+    };
+
+    const handleAppInstalled = () => {
+      deferredPromptRef.current = null;
+      setCanInstall(false);
+      setIsStandalone(true);
+      setPwaInstallOpen(false);
+      showNotice("Appen installerad!");
     };
 
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    if (shouldOfferInstall) {
+      promptFallbackTimer = window.setTimeout(() => {
+        if (deferredPromptRef.current || isStandaloneMode || hasRecentPwaInstallDismissal()) return;
+        openInstallPrompt();
+      }, 1200);
+    }
 
     return () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+      if (promptFallbackTimer) window.clearTimeout(promptFallbackTimer);
     };
   }, []);
 
@@ -1110,6 +1326,8 @@ function App() {
     map.getPane("parking")!.style.zIndex = "480";
     map.createPane("charging");
     map.getPane("charging")!.style.zIndex = "470";
+    map.createPane("officialStreetRules");
+    map.getPane("officialStreetRules")!.style.zIndex = "420";
     map.createPane("route");
     map.getPane("route")!.style.zIndex = "450";
 
@@ -1164,7 +1382,9 @@ function App() {
     });
 
     parkingLayerRef.current = L.layerGroup().addTo(map);
+    streetRuleLayerRef.current = L.layerGroup().addTo(map);
     locationLayerRef.current = L.layerGroup().addTo(map);
+    searchMarkerLayerRef.current = L.layerGroup().addTo(map);
     routeLayerRef.current = L.layerGroup().addTo(map);
     clickLayerRef.current = L.layerGroup().addTo(map);
 
@@ -1212,7 +1432,9 @@ function App() {
       map.remove();
       mapRef.current = null;
       parkingLayerRef.current = null;
+      streetRuleLayerRef.current = null;
       locationLayerRef.current = null;
+      searchMarkerLayerRef.current = null;
       routeLayerRef.current = null;
       clickLayerRef.current = null;
     };
@@ -1234,10 +1456,24 @@ function App() {
     }
   }, [clickedPosition]);
 
+  useEffect(() => {
+    const layer = searchMarkerLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!searchPosition) return;
+    const icon = L.divIcon({
+      className: "search-marker-wrap",
+      html: '<div class="search-marker" aria-label="Sökt adress"></div>',
+      iconSize: [34, 44],
+      iconAnchor: [17, 42],
+    });
+    L.marker(searchPosition, { pane: "parking", icon, title: "Sökt adress" }).addTo(layer);
+  }, [searchPosition]);
+
   const matchesCategory = useCallback((place: ParkingPlace) => {
     if (category === "all") return true;
     if (category === "free") return place.free && (place.evSpaces ?? 0) === 0;
-    if (category === "garage") return place.kind === "garage";
+    if (category === "garage") return place.kind === "garage" || (place.kind === "surface" && place.name !== "Parkering" && (place.evSpaces ?? 0) === 0 && !place.free && place.priceText !== "Pris ej verifierat");
     if (category === "street") return place.kind === "street" || place.kind === "surface";
     if (category === "disabled") return (place.disabledSpaces ?? 0) > 0;
     if (category === "ev") return (place.evSpaces ?? 0) > 0;
@@ -1245,9 +1481,126 @@ function App() {
     return place.tariff === category;
   }, [category]);
 
-  const filteredParking = useMemo(() => allParking.filter(matchesCategory), [allParking, matchesCategory]);
   const focusPosition = userPosition || searchPosition || viewCenter;
+  const hasOfficialStreetData = allParking.some((place) => place.id.startsWith("stockholm-open-data-ptillaten-"));
+  const filteredParking = useMemo(
+    () => dedupeDisplayParking(
+      allParking.filter((place) =>
+        !(hasOfficialStreetData && place.source === "local" && place.kind === "street")
+        && (!limitToArea || !areaScope || isWithinArea(place, areaScope))
+        && matchesCategory(place),
+      ),
+      category,
+    ),
+    [allParking, areaScope, category, hasOfficialStreetData, limitToArea, matchesCategory],
+  );
   const selectedParkingTariff = selectedParking && isTariffId(selectedParking.tariff) ? selectedParking.tariff : null;
+
+  const loadParkingAround = useCallback(async (nextCategory: Category = category, requestedScope?: AreaScope) => {
+    if (!online) {
+      showNotice("Områdessökning kräver internet. Sparad data kan fortfarande visas.");
+      return;
+    }
+
+    if (typeof nextCategory !== "number") {
+      setAreaLoading(true);
+      try {
+        let count = 0;
+        if (nextCategory === "garage") {
+          count = await fetchGlobalOsmParking("garage");
+          void fetchApiParking();
+        } else if (nextCategory === "free") {
+          const counts = await Promise.all([fetchGlobalOsmParking("free"), fetchAllOfficialRuleParking(["ptillaten"])]);
+          count = counts.reduce((sum, value) => sum + value, 0);
+        } else if (nextCategory === "disabled") {
+          count = await fetchAllOfficialRuleParking(["prorelsehindrad"]);
+        } else if (nextCategory === "mc") {
+          count = await fetchAllOfficialRuleParking(["pmotorcykel"]);
+        } else if (nextCategory === "ev") {
+          await Promise.all([fetchEvCharging(), fetchOcmCharging(), fetchNobilCharging()]);
+        } else if (nextCategory === "street") {
+          count = await fetchAllOfficialRuleParking(["ptillaten"]);
+        } else {
+          const counts = await Promise.all([
+            fetchGlobalOsmParking("garage"),
+            fetchGlobalOsmParking("free"),
+            fetchAllOfficialRuleParking(["ptillaten", "prorelsehindrad", "pmotorcykel"]),
+            Promise.all([fetchEvCharging(), fetchOcmCharging(), fetchNobilCharging()]).then(() => 0),
+          ]);
+          count = counts.reduce((sum, value) => sum + value, 0);
+          void fetchApiParking();
+        }
+        showNotice(count > 0
+          ? `${count} källposter hämtades för ${categoryLabel(nextCategory).toLowerCase()} i Stockholmsområdet`
+          : `${categoryLabel(nextCategory)} är uppdaterat för hela Stockholmsområdet`);
+      } catch {
+        showNotice(`All data för ${categoryLabel(nextCategory).toLowerCase()} kunde inte hämtas just nu. Sparad data visas.`);
+      } finally {
+        setAreaLoading(false);
+      }
+      return;
+    }
+
+    const scope = requestedScope ?? areaScope ?? {
+      center: focusPosition,
+      label: userPosition ? "din position" : "kartans område",
+      radiusKm: AREA_SEARCH_RADIUS_KM,
+    };
+    setAreaScope(scope);
+    setAreaLoading(true);
+
+    try {
+      await fetchNearbyOsmParking(scope);
+      showNotice(`Visar ${categoryLabel(nextCategory).toLowerCase()} inom ${Math.round(scope.radiusKm * 1000)} m från ${scope.label}`);
+    } catch {
+      showNotice("Kunde inte hämta all områdesdata just nu. Försök igen.");
+    } finally {
+      setAreaLoading(false);
+    }
+  }, [areaScope, category, fetchAllOfficialRuleParking, fetchApiParking, fetchEvCharging, fetchGlobalOsmParking, fetchNearbyOsmParking, fetchNobilCharging, fetchOcmCharging, focusPosition, online, showNotice, userPosition]);
+
+  const loadCurrentMapView = useCallback(async () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const center = map.getCenter();
+    const bounds = map.getBounds();
+    const radiusKm = distanceKm([center.lat, center.lng], [bounds.getNorth(), bounds.getEast()]);
+    if (radiusKm > 5) {
+      showNotice("Zooma in mer för att hämta exakt parkeringsdata i kartvyn.");
+      return;
+    }
+    const scope: AreaScope = {
+      center: [center.lat, center.lng],
+      label: "aktuell kartvy",
+      radiusKm: Math.min(5, Math.max(AREA_SEARCH_RADIUS_KM, radiusKm)),
+    };
+    setAreaScope(scope);
+    setLimitToArea(true);
+    setAreaLoading(true);
+    const officialRules: OfficialRule[] = category === "mc"
+      ? ["pmotorcykel"]
+      : category === "disabled"
+        ? ["prorelsehindrad"]
+        : category === "all" || category === "street" || category === "free" || typeof category === "number"
+          ? ["ptillaten"]
+          : [];
+    try {
+      await Promise.all([
+        fetchNearbyOsmParking(scope),
+        officialRules.length > 0 ? fetchOfficialRuleParking(officialRules, scope) : Promise.resolve(),
+        category === "ev" ? Promise.all([fetchEvCharging(), fetchOcmCharging(), fetchNobilCharging()]) : Promise.resolve(),
+      ]);
+      showNotice(`Visar ${categoryLabel(category).toLowerCase()} i aktuell kartvy`);
+    } catch {
+      showNotice("All parkeringsdata i kartvyn kunde inte hämtas. Sparad data visas.");
+    } finally {
+      setAreaLoading(false);
+    }
+  }, [category, fetchEvCharging, fetchNearbyOsmParking, fetchNobilCharging, fetchOcmCharging, fetchOfficialRuleParking, showNotice]);
+
+  useEffect(() => {
+    setAllParking((current) => addNearbyStreetAddresses(current));
+  }, [allParking]);
 
   useEffect(() => {
     if (category !== "mc") {
@@ -1256,7 +1609,7 @@ function App() {
     }
 
     const map = mapRef.current;
-    const motorcyclePlaces = allParking.filter((place) => (place.mcSpaces ?? 0) > 0);
+    const motorcyclePlaces = filteredParking.filter((place) => (place.mcSpaces ?? 0) > 0);
     if (!map || motorcyclePlaces.length < 2 || motorcyclePlaces.length <= lastMcFitCountRef.current) return;
 
     lastMcFitCountRef.current = motorcyclePlaces.length;
@@ -1265,7 +1618,7 @@ function App() {
       maxZoom: 11,
       animate: true,
     });
-  }, [allParking, category]);
+  }, [category, filteredParking]);
 
   const searchMatches = useMemo(() => {
     const needle = normalize(query);
@@ -1277,6 +1630,41 @@ function App() {
       .map((place) => ({ place, distance: distanceKm(focusPosition, [place.lat, place.lng] as LatLng) }))
       .sort((a, b) => a.distance - b.distance);
   }, [filteredParking, focusPosition, query]);
+
+  useEffect(() => {
+    const layer = streetRuleLayerRef.current;
+    if (!layer) return;
+    layer.clearLayers();
+    if (!areaScope || !limitToArea) return;
+
+    filteredParking
+      .filter((place) => place.source === "stockholm-open-data" && (place.positions?.length ?? 0) >= 2)
+      .forEach((place) => {
+        const color = placeColor(place);
+        L.polyline(place.positions!, {
+          pane: "officialStreetRules",
+          color: "#ffffff",
+          weight: (place.disabledSpaces ?? 0) > 0 ? 8 : 7,
+          opacity: 0.9,
+          interactive: false,
+        }).addTo(layer);
+        L.polyline(place.positions!, {
+          pane: "officialStreetRules",
+          color,
+          weight: (place.disabledSpaces ?? 0) > 0 ? 4.8 : 3.6,
+          opacity: 0.92,
+          interactive: true,
+        })
+          .bindTooltip(`${place.address} · ${placeTariffLabel(place)}`, { sticky: true, className: "street-tooltip" })
+          .on("click", (event) => {
+            L.DomEvent.stopPropagation(event);
+            setSelectedZone(null);
+            setClickedPosition(null);
+            setSelectedParking(place);
+          })
+          .addTo(layer);
+      });
+  }, [areaScope, filteredParking, limitToArea]);
 
   useEffect(() => {
     const layer = parkingLayerRef.current;
@@ -1309,10 +1697,22 @@ function App() {
 
   const selectCategory = (next: Category, fit = false) => {
     setCategory(next);
+    setLimitToArea(false);
     setSelectedParking(null);
     setClickedPosition(null);
     setSearchLocations([]);
+    setSearchFocused(false);
     setPanelOpen(true);
+    if (typeof next !== "number") {
+      setQuery("");
+      void loadParkingAround(next);
+    } else {
+      setQuery("");
+      setAreaLoading(true);
+      void fetchAllOfficialRuleParking(["ptillaten"])
+        .catch(() => showNotice("Taxeregler kunde inte uppdateras. Sparad data visas."))
+        .finally(() => setAreaLoading(false));
+    }
     if (fit && typeof next === "number" && mapRef.current) {
       const points = TAX_AREAS.filter((area) => area.tariff === next).flatMap((area) => area.positions);
       if (points.length) mapRef.current.fitBounds(L.latLngBounds(points), { padding: [70, 70], maxZoom: 13 });
@@ -1379,6 +1779,8 @@ function App() {
         format: "jsonv2",
         limit: "5",
         countrycodes: "se",
+        addressdetails: "1",
+        "accept-language": "sv",
         bounded: "1",
         viewbox: "17.75,59.48,18.35,59.15",
       });
@@ -1386,23 +1788,38 @@ function App() {
         headers: { Accept: "application/json" },
       });
       if (!response.ok) throw new Error("Sökningen misslyckades");
-      const result = (await response.json()) as Array<{ display_name: string; lat: string; lon: string; type: string }>;
+      const result = (await response.json()) as Array<{
+        display_name: string;
+        lat: string;
+        lon: string;
+        type: string;
+        address?: {
+          postcode?: string;
+          city?: string;
+          town?: string;
+          village?: string;
+          municipality?: string;
+          city_district?: string;
+          suburb?: string;
+        };
+      }>;
       const hasHouseNum = /^\s*.+\s+\d+\s*$/.test(value);
       const seen = new Set<string>();
       setSearchLocations(result.flatMap((item) => {
         const raw = item.display_name.replace(/, Sverige$/, "");
         const parts = raw.split(",").map((s) => s.trim());
-        const street = parts[0];
-        const area = parts.slice(1, 3).join(", ");
-        const name = hasHouseNum ? value + ", " + area : raw;
+        const address = item.address;
+        const locality = (/^164\s?\d\d/.test(address?.postcode ?? "") ? "Kista" : undefined)
+          || address?.town || address?.village || address?.city
+          || address?.city_district || address?.suburb || address?.municipality
+          || parts.slice(1, 3).join(", ");
+        const name = hasHouseNum ? value + ", " + locality : raw;
         const key = name.toLowerCase();
         if (seen.has(key)) return [];
         seen.add(key);
         return [{ name, lat: Number(item.lat), lng: Number(item.lon), type: item.type }];
       }));
-      if (result.length === 0 && hasHouseNum) {
-        setSearchLocations([{ name: value + ", Stockholm", lat: 59.3293, lng: 18.0686, type: "address" }]);
-      } else if (result.length === 0) {
+      if (result.length === 0) {
         showNotice("Ingen adress hittades i Stockholm");
       }
     } catch {
@@ -1412,14 +1829,30 @@ function App() {
     }
   };
 
-  const chooseSearchLocation = (location: SearchLocation) => {
+  const chooseSearchLocation = async (location: SearchLocation) => {
     const position: LatLng = [location.lat, location.lng];
+    const scope: AreaScope = { center: position, label: location.name.split(",")[0], radiusKm: AREA_SEARCH_RADIUS_KM };
     setSearchPosition(position);
+    setAreaScope(scope);
+    setLimitToArea(true);
     setClickedPosition(null);
+    setSearchFocused(false);
     setQuery("");
     setSearchLocations([]);
     mapRef.current?.flyTo(position, 16, { duration: 1.2 });
-    showNotice("Visar parkeringar närmast den valda platsen");
+    setAreaLoading(true);
+    try {
+      await Promise.all([
+        fetchNearbyOsmParking(scope),
+        fetchOfficialRuleParking(["ptillaten", "prorelsehindrad", "pmotorcykel"], scope),
+        fetchApiParking(),
+      ]);
+      showNotice(`Parkeringar nära ${scope.label} har hämtats`);
+    } catch {
+      showNotice("Alla parkeringar i området kunde inte hämtas. Sparad data visas.");
+    } finally {
+      setAreaLoading(false);
+    }
   };
 
   const updateUserLocation = useCallback((next: LatLng, accuracy: number, followRoute = false) => {
@@ -1575,7 +2008,7 @@ function App() {
   }, [calculateRoute, routeInfo?.arrived, routeInfo?.tracking, showNotice, updateUserLocation]);
 
   const dismissPwaInstall = () => {
-    localStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, String(Date.now()));
+    sessionStorage.setItem(PWA_INSTALL_DISMISSAL_KEY, "true");
     setPwaInstallOpen(false);
   };
 
@@ -1586,7 +2019,10 @@ function App() {
     }
 
     const prompt = deferredPromptRef.current;
-    if (!prompt) return;
+    if (!prompt) {
+      showNotice("Öppna webbläsarens meny och välj Installera app eller Lägg till på hemskärmen.");
+      return;
+    }
 
     await prompt.prompt();
     const { outcome } = await prompt.userChoice;
@@ -1602,6 +2038,13 @@ function App() {
   };
 
   const saveOffline = async () => {
+    if (!isStandalone && isIosDevice()) {
+      setCanInstall(true);
+      setInstallPlatform("ios");
+      setPwaInstallOpen(true);
+      return;
+    }
+
     if (deferredPromptRef.current) {
       deferredPromptRef.current.prompt();
       const { outcome } = await deferredPromptRef.current.userChoice;
@@ -1716,6 +2159,7 @@ function App() {
         <div className="quick-filters" aria-label="Snabbfilter">
           <button className={category === "all" ? "active" : ""} onClick={() => selectCategory("all")} type="button">Alla</button>
           <button className={category === "garage" ? "active" : ""} onClick={() => selectCategory("garage")} type="button"><Warehouse size={15} /> Garage</button>
+          <button className={category === "street" ? "active" : ""} onClick={() => selectCategory("street")} type="button"><Route size={15} /> Gata</button>
           <button className={category === "free" ? "active" : ""} onClick={() => selectCategory("free")} type="button">Gratis</button>
           <button className={category === "disabled" ? "active" : ""} onClick={() => selectCategory("disabled")} type="button">Handikapp</button>
           <button className={category === "ev" ? "active" : ""} onClick={() => selectCategory("ev")} type="button">Elbil</button>
@@ -1823,11 +2267,24 @@ function App() {
             </div>
           ) : (
             <div className="parking-results">
+              {areaScope && limitToArea && (
+                <section className="area-search-card" aria-label="Parkeringar i valt område">
+                  <span className="area-search-icon"><MapPin size={18} /></span>
+                  <span className="area-search-copy">
+                    <strong>Parkeringar nära {areaScope.label}</strong>
+                    <small>{Math.round(areaScope.radiusKm * 1000)} m radie · välj filter och hämta bara det du behöver</small>
+                  </span>
+                  <button type="button" onClick={() => void loadCurrentMapView()} disabled={areaLoading || !online}>
+                    {areaLoading ? <RefreshCw className="spin" size={15} /> : <Search size={15} />}
+                    {areaLoading ? "Hämtar" : "Hämta"}
+                  </button>
+                </section>
+              )}
               <div className="results-heading">
-                <span>{query ? "Sökresultat" : userPosition ? "Närmast dig" : searchPosition ? "Närmast vald plats" : categoryLabel(category)}</span>
-                <button type="button" onClick={() => void fetchOsmParking(true)} disabled={dataLoading || !online} title="Uppdatera parkeringsdata">
-                  <RefreshCw size={14} className={dataLoading ? "spin" : ""} />
-                  {filteredParking.length} platser
+                <span>{limitToArea && areaScope ? `${categoryLabel(category)} i kartvyn` : typeof category !== "number" ? `${categoryLabel(category)} i Stockholmsområdet` : query ? "Sökresultat" : categoryLabel(category)}</span>
+                <button type="button" onClick={() => void loadCurrentMapView()} disabled={areaLoading || !online} title="Hämta parkeringsdata i aktuell kartvy">
+                  <RefreshCw size={14} className={areaLoading ? "spin" : ""} />
+                  {areaLoading ? "Hämtar" : `${filteredParking.length} platser`}
                 </button>
               </div>
 
@@ -1878,6 +2335,9 @@ function App() {
       <div className="map-top-actions">
         <button type="button" onClick={() => setPanelOpen((open) => !open)} className="list-button">
           <ListFilter size={18} /> <span>{panelOpen ? "Dölj lista" : "Visa parkeringar"}</span>
+        </button>
+        <button type="button" onClick={() => void loadCurrentMapView()} className="fetch-view-button" disabled={areaLoading || !online}>
+          {areaLoading ? <RefreshCw className="spin" size={17} /> : <Search size={17} />} <span>{areaLoading ? "Hämtar..." : "Hämta kartvy"}</span>
         </button>
         <button type="button" onClick={saveOffline} className={canInstall ? "install-prompt-button" : offlineReady ? "offline-saved" : ""}>
           <Download size={17} /> <span>{isStandalone ? "Appen installerad" : canInstall ? "Ladda ner appen" : offlineProgress ? "Laddar ner..." : offlineReady ? "Offline redo" : "Spara offline"}</span>
@@ -2108,13 +2568,20 @@ function App() {
               <p className="pwa-install-eyebrow">PARKERA I STHLM</p>
               <h2 id="pwa-install-title">Ha kartan nära till hands</h2>
               {installPlatform === "android" ? (
-                <p>Installera Parkera i Sthlm på hemskärmen för snabb åtkomst till kartan, även när uppkopplingen är svag.</p>
+                <>
+                  <p>Installera Parkera i Sthlm som en riktig webbapp, inte som en vanlig genväg.</p>
+                  <ol className="pwa-install-steps">
+                    <li><span>1</span><div>Tryck på <strong>Installera appen</strong> nedan.</div></li>
+                    <li><span>2</span><div>Om ingen ruta öppnas: välj webbläsarens meny och sedan <strong>Installera app</strong>.</div></li>
+                  </ol>
+                </>
               ) : (
                 <>
                   <p>Du kan lägga till Parkera i Sthlm på hemskärmen och öppna den som en vanlig app.</p>
                   <ol className="pwa-install-steps">
                     <li><span>1</span><div>Tryck på <strong>Dela</strong> i Safari.</div></li>
                     <li><span>2</span><div>Välj <strong>Lägg till på hemskärmen</strong>.</div></li>
+                    <li><span>3</span><div>Kontrollera att <strong>Öppna som webbapp</strong> är aktiverat och tryck på Lägg till.</div></li>
                   </ol>
                 </>
               )}

@@ -281,6 +281,7 @@ a:focus-visible {
   display: flex;
   flex: 0 0 auto;
   gap: 6px;
+  overflow-x: auto;
   padding: 0 14px 12px;
   border-bottom: 1px solid #e7eceb;
 }
@@ -1209,6 +1210,73 @@ a:focus-visible {
   line-height: 1.2;
 }
 
+.area-search-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  margin: 1px 12px 3px;
+  padding: 10px;
+  border: 1px solid #cddff8;
+  border-radius: 13px;
+  background: linear-gradient(135deg, #f3f8ff, #fbfdff);
+  box-shadow: 0 5px 15px rgba(18, 102, 238, 0.07);
+}
+
+.area-search-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 10px;
+  color: #1266ee;
+  background: #dceaff;
+}
+
+.area-search-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.area-search-copy strong {
+  overflow: hidden;
+  color: #214466;
+  font-size: 10.5px;
+  font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.area-search-copy small {
+  margin-top: 2px;
+  color: #627a90;
+  font-size: 8.7px;
+  font-weight: 570;
+  line-height: 1.25;
+}
+
+.area-search-card button {
+  display: inline-flex;
+  height: 31px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 9px;
+  color: #fff;
+  background: #1266ee;
+  box-shadow: 0 5px 11px rgba(18, 102, 238, 0.2);
+  font-size: 9.5px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.area-search-card button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .route-banner strong i {
   color: #acb6ba;
   font-style: normal;
@@ -1634,8 +1702,7 @@ a:focus-visible {
     display: inline-flex;
   }
 
-  .map-top-actions button:nth-child(2) span,
-  .map-top-actions button.list-button span {
+  .map-top-actions button span {
     display: none;
   }
 
@@ -1936,6 +2003,33 @@ a:focus-visible {
 }
 
 /* Click Marker styling */
+.search-marker-wrap {
+  background: transparent !important;
+  border: 0 !important;
+}
+
+.search-marker {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  background: #facc15;
+  box-shadow: 0 3px 12px rgba(161, 98, 7, 0.45);
+  transform: rotate(-45deg);
+}
+
+.search-marker::after {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  content: "";
+}
+
 .click-marker-wrap {
   background: transparent !important;
   border: 0 !important;

@@ -9,6 +9,7 @@ export type ParkingPlace = {
   area: string;
   lat: number;
   lng: number;
+  positions?: LatLng[];
   kind: ParkingKind;
   tariff: TariffId | null;
   free: boolean;
@@ -14368,19 +14369,60 @@ export const LOCAL_PARKING: ParkingPlace[] = [
     lat: 59.2754, lng: 18.1256, kind: "street", tariff: 5, free: false,
     priceText: "5 kr/tim dagtid", note: "Gatuparkering i taxeområde 5. Gratis utanför avgiftstid.", source: "local",
   },
+  {
+    id: "apcoa-bromma-sjukhus-besokande", name: "Bromma Sjukhus besöksparkering", address: "Follingbogatan 32", area: "Bromma",
+    lat: 59.35805, lng: 17.899, kind: "surface", tariff: null, free: false,
+    priceText: "25–27 kr/tim enligt APCOA", note: "Publik besöksparkering med 300 platser, öppen dygnet runt. Taxa verifierad mot APCOA 2026-07-14: 27 kr/tim kl. 07–18 och 25 kr/tim kl. 18–07. Kontrollera aktuell skyltning.",
+    spaces: 300, source: "local",
+  },
 ];
 
-// Officiell prisberäkning baserad på Stockholms stads taxakoder (parkering.stockholm)
-// "Vardag före sön/helgdag" = fredag (om lördag är vanlig dag) ELLER lördag (inför söndag)
-// I praktiken: lördag behandlas alltid som "vardag före sön/helgdag" = kortare avgiftstid
+function easterSunday(year: number) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+function sameDate(first: Date, second: Date) {
+  return first.getFullYear() === second.getFullYear() && first.getMonth() === second.getMonth() && first.getDate() === second.getDate();
+}
+
+function shiftedDate(date: Date, days: number) {
+  const shifted = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  shifted.setDate(shifted.getDate() + days);
+  return shifted;
+}
+
+function isSwedishPublicHoliday(date: Date) {
+  const year = date.getFullYear();
+  const fixedDates = [[0, 1], [0, 6], [4, 1], [5, 6], [11, 25], [11, 26]];
+  if (fixedDates.some(([month, day]) => date.getMonth() === month && date.getDate() === day)) return true;
+  const easter = easterSunday(year);
+  if ([-2, 0, 1, 39].some((offset) => sameDate(date, shiftedDate(easter, offset)))) return true;
+  const day = date.getDate();
+  if (date.getMonth() === 5 && date.getDay() === 6 && day >= 20 && day <= 26) return true;
+  return date.getDay() === 6 && ((date.getMonth() === 9 && day === 31) || (date.getMonth() === 10 && day <= 6));
+}
+
+// Officiell prisberäkning baserad på Stockholms stads taxakoder (parkering.stockholm).
 export function getCurrentPrice(tariff: TariffId, date = new Date()) {
-  const day = date.getDay(); // 0=söndag, 1=måndag ... 5=fredag, 6=lördag
+  const day = date.getDay();
   const hour = date.getHours() + date.getMinutes() / 60;
-
-  // Hjälpvariabler
-  const isRegularWeekday = day >= 1 && day <= 5; // Måndag–Fredag
-  const isSaturdayOrSunday = day === 0 || day === 6; // Lördag = vardag före söndag, söndag = helgdag
-
+  const holiday = day === 0 || isSwedishPublicHoliday(date);
+  const dayBeforeSundayOrHoliday = !holiday && (day === 6 || isSwedishPublicHoliday(shiftedDate(date, 1)));
+  const isRegularWeekday = !holiday && !dayBeforeSundayOrHoliday && day >= 1 && day <= 5;
   // Taxa 1: 55 kr/tim – dygnet runt, alla dagar (Taxakod 1)
   if (tariff === 1) return { amount: 55, label: "55 kr/tim just nu" };
 
@@ -14389,18 +14431,10 @@ export function getCurrentPrice(tariff: TariffId, date = new Date()) {
   // - Vardag före sön/helgdag (Fredag) & Lördag/Söndag: 31 kr 09–19, övrig tid 20 kr
   if (tariff === 2) {
     if (isRegularWeekday) {
-      // Fredag (day=5) = "vardag före söndag" → kortare peaktid
-      if (day === 5) {
-        return hour >= 9 && hour < 19
-          ? { amount: 31, label: "31 kr/tim just nu" }
-          : { amount: 20, label: "20 kr/tim just nu" };
-      }
-      // Måndag–Torsdag: peak 07–21
       return hour >= 7 && hour < 21
         ? { amount: 31, label: "31 kr/tim just nu" }
         : { amount: 20, label: "20 kr/tim just nu" };
     }
-    // Lördag & Söndag: peak 09–19
     return hour >= 9 && hour < 19
       ? { amount: 31, label: "31 kr/tim just nu" }
       : { amount: 20, label: "20 kr/tim just nu" };
@@ -14411,9 +14445,9 @@ export function getCurrentPrice(tariff: TariffId, date = new Date()) {
   // - Vardag före sön/helgdag (Fredag) & Lördag: 15 kr/tim 11–17
   // - Övrig tid: gratis
   if (tariff === 3) {
-    if (isRegularWeekday && day !== 5 && hour >= 7 && hour < 19)
+    if (isRegularWeekday && hour >= 7 && hour < 19)
       return { amount: 20, label: "20 kr/tim just nu" };
-    if ((day === 5 || day === 6) && hour >= 11 && hour < 17)
+    if (dayBeforeSundayOrHoliday && hour >= 11 && hour < 17)
       return { amount: 15, label: "15 kr/tim just nu" };
     return { amount: 0, label: "Gratis just nu" };
   }
@@ -14423,9 +14457,9 @@ export function getCurrentPrice(tariff: TariffId, date = new Date()) {
   // - Vardag före sön/helgdag (Fredag) & Lördag: 10 kr/tim 11–17
   // - Övrig tid: gratis
   if (tariff === 4) {
-    if (isRegularWeekday && day !== 5 && hour >= 7 && hour < 19)
+    if (isRegularWeekday && hour >= 7 && hour < 19)
       return { amount: 10, label: "10 kr/tim just nu" };
-    if ((day === 5 || day === 6) && hour >= 11 && hour < 17)
+    if (dayBeforeSundayOrHoliday && hour >= 11 && hour < 17)
       return { amount: 10, label: "10 kr/tim just nu" };
     return { amount: 0, label: "Gratis just nu" };
   }
@@ -14433,7 +14467,7 @@ export function getCurrentPrice(tariff: TariffId, date = new Date()) {
   // Taxa 5: Taxakod 5
   // - Vardagar (Mån–Tor): 5 kr/tim 07–19
   // - Lördag, söndag och helgdag: gratis (ingen avgift alls)
-  if (isRegularWeekday && day !== 5 && hour >= 7 && hour < 19)
+  if (isRegularWeekday && hour >= 7 && hour < 19)
     return { amount: 5, label: "5 kr/tim just nu" };
   return { amount: 0, label: "Gratis just nu" };
 }
