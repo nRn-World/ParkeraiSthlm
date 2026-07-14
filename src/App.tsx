@@ -2543,23 +2543,23 @@ function App() {
         </div>
       </section>
 
-      <div className="map-top-actions">
-        <button type="button" onClick={() => setPanelOpen((open) => !open)} className="list-button">
+      <div className="map-top-actions" aria-label="Snabbåtgärder">
+        <button type="button" onClick={() => setPanelOpen((open) => !open)} className="list-button" aria-label={panelOpen ? "Dölj parkeringslistan" : "Visa parkeringslistan"} aria-pressed={panelOpen} title={panelOpen ? "Dölj lista" : "Visa parkeringar"} data-mobile-label="Lista">
           <ListFilter size={18} /> <span>{panelOpen ? "Dölj lista" : "Visa parkeringar"}</span>
         </button>
-        <button type="button" onClick={() => void loadCurrentMapView()} className="fetch-view-button" disabled={areaLoading || !online}>
+        <button type="button" onClick={() => void loadCurrentMapView()} className="fetch-view-button" disabled={areaLoading || !online} aria-label={areaLoading ? "Hämtar parkeringar i aktuell kartvy" : "Hämta parkeringar i aktuell kartvy"} title="Hämta kartvy" data-mobile-label={areaLoading ? "Hämtar" : "Kartvy"}>
           {areaLoading ? <RefreshCw className="spin" size={17} /> : <Search size={17} />} <span>{areaLoading ? "Hämtar..." : "Hämta kartvy"}</span>
         </button>
         <button type="button" onClick={saveOffline} className={canInstall ? "install-prompt-button" : offlineReady ? "offline-saved" : ""}>
           <Download size={17} /> <span>{isStandalone ? "Appen installerad" : canInstall ? "Ladda ner appen" : offlineProgress ? "Laddar ner..." : offlineReady ? "Offline redo" : "Spara offline"}</span>
         </button>
-        <button type="button" className="utility-control favorites-control" onClick={() => setFavoritesOpen(true)} aria-label={`Favoriter, ${favorites.length} sparade`} title="Favoriter">
+        <button type="button" className="utility-control favorites-control" onClick={() => setFavoritesOpen(true)} aria-label={`Favoriter, ${favorites.length} sparade`} title="Favoriter" data-mobile-label="Favoriter">
           <Heart size={17} fill={favorites.length ? "currentColor" : "none"} /> <span>Favoriter{favorites.length ? ` (${favorites.length})` : ""}</span>
         </button>
-        <button type="button" className={`utility-control parked-control ${parkedCar ? "has-saved-car" : ""}`} onClick={() => parkedCar ? returnToParkedCar() : openParkedCar(true)} aria-label={parkedCar ? "Gå direkt till min parkerade bil" : "Spara var jag parkerade"} title={parkedCar ? "Gå till min bil" : "Var parkerade jag?"}>
+        <button type="button" className={`utility-control parked-control ${parkedCar ? "has-saved-car" : ""}`} onClick={() => parkedCar ? returnToParkedCar() : openParkedCar(true)} aria-label={parkedCar ? "Gå direkt till min parkerade bil" : "Spara var jag parkerade"} title={parkedCar ? "Gå till min bil" : "Var parkerade jag?"} data-mobile-label={parkedCar ? "Min bil" : "Spara bil"}>
           <CarFront size={17} /> <span>{parkedCar ? "Min bil" : "Spara bil"}</span>
         </button>
-        <button type="button" className="utility-control profile-control" onClick={() => { setVehicleProfileDraft(vehicleProfile); setVehicleProfileOpen(true); }} aria-label="Fordonsprofil" title="Fordonsprofil">
+        <button type="button" className="utility-control profile-control" onClick={() => { setVehicleProfileDraft(vehicleProfile); setVehicleProfileOpen(true); }} aria-label={`Fordonsprofil, ${VEHICLE_PROFILES[vehicleProfile].label}`} title="Fordonsprofil" data-mobile-label="Profil">
           <Settings2 size={17} /> <span>{VEHICLE_PROFILES[vehicleProfile].label}</span>
         </button>
         <button type="button" onClick={() => setInfoOpen(true)} aria-label="Information"><Info size={18} /></button>
