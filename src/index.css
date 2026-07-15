@@ -1000,12 +1000,27 @@ a:focus-visible {
 }
 
 .place-sheet {
+  box-sizing: border-box;
   bottom: 22px;
   left: calc(50% + 195px);
   width: min(520px, calc(100vw - 460px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 44px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   padding: 18px;
   border-radius: 20px;
   transform: translateX(-50%);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+}
+
+.place-sheet > .sheet-close {
+  position: sticky;
+  top: 0;
+  right: auto;
+  margin-bottom: -30px;
+  margin-left: auto;
 }
 
 .sheet-close {
@@ -1028,7 +1043,11 @@ a:focus-visible {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding-right: 31px;
+  padding-right: 38px;
+}
+
+.place-title > div {
+  min-width: 0;
 }
 
 .place-title > span {
@@ -1059,6 +1078,7 @@ a:focus-visible {
   font-size: 18px;
   font-weight: 820;
   letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
 }
 
 .place-title p,
@@ -1080,7 +1100,8 @@ a:focus-visible {
 }
 
 .place-facts {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   gap: 0;
   margin-top: 15px;
   padding: 11px 0;
@@ -1088,20 +1109,19 @@ a:focus-visible {
   border-bottom: 1px solid #e7eceb;
 }
 
-.place-facts > div {
+.place-fact {
   display: flex;
-  min-width: 100px;
-  flex: 1;
+  min-width: 0;
   flex-direction: column;
   padding: 0 11px;
   border-right: 1px solid #e7eceb;
 }
 
-.place-facts > div:first-child {
+.place-fact:first-child {
   padding-left: 0;
 }
 
-.place-facts > div:last-child {
+.place-fact:last-of-type {
   border-right: 0;
 }
 
@@ -1116,6 +1136,8 @@ a:focus-visible {
   color: #263746;
   font-size: 11px;
   font-weight: 790;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .place-note {
@@ -1133,11 +1155,59 @@ a:focus-visible {
   color: #e18c3c;
 }
 
+.service-day-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 11px;
+  padding: 10px 11px;
+  border: 1px solid #f0d59c;
+  border-radius: 11px;
+  color: #a7650e;
+  background: #fff9ec;
+}
+
+.service-day-card > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.service-day-card > div {
+  display: grid;
+  gap: 2px;
+}
+
+.service-day-card small {
+  font-size: 8px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.055em;
+}
+
+.service-day-card strong {
+  color: #714408;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.service-day-card span {
+  color: #8d6b38;
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+
+.place-ev-details {
+  min-width: 0;
+  grid-column: 1 / -1;
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid #e7eceb;
+}
+
 .place-ev-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 12px;
   padding-bottom: 6px;
   color: #7c3aed;
   font-size: 10px;
@@ -1213,6 +1283,8 @@ a:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 7px;
+  min-width: 0;
+  padding: 0 10px;
   border: 1px solid #dce4e3;
   border-radius: 10px;
   color: #52636e;
@@ -1220,6 +1292,7 @@ a:focus-visible {
   font-size: 10px;
   font-weight: 760;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .place-actions .primary-action,
@@ -1996,13 +2069,18 @@ a:focus-visible {
   }
 
   .place-sheet {
-    right: 10px;
+    right: max(10px, env(safe-area-inset-right, 0px));
     bottom: calc(94px + env(safe-area-inset-bottom, 0px));
-    left: 10px;
+    left: max(10px, env(safe-area-inset-left, 0px));
     width: auto;
+    max-width: none;
+    max-height: calc(100dvh - 114px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
     padding: 16px;
     border-radius: 18px;
     transform: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .place-facts {
@@ -2089,16 +2167,50 @@ a:focus-visible {
     font-size: 16px;
   }
 
+  .place-sheet {
+    padding: 14px;
+  }
+
+  .sheet-close {
+    top: 10px;
+    right: 10px;
+    width: 34px;
+    height: 34px;
+  }
+
+  .place-title {
+    gap: 10px;
+    padding-right: 40px;
+  }
+
+  .place-title > span {
+    width: 40px;
+    height: 40px;
+  }
+
   .place-note {
     display: none;
   }
 
   .place-actions button {
-    font-size: 9px;
+    min-height: 44px;
+    height: auto;
+    font-size: 10px;
   }
 
-  .place-facts > div {
-    min-width: 0;
+  .place-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .place-actions .primary-action {
+    grid-column: 1 / -1;
+  }
+
+  .place-utility-actions button {
+    min-height: 44px;
+    height: auto;
+    padding: 0 6px;
+    white-space: normal;
   }
 
   .info-modal {
@@ -2114,6 +2226,30 @@ a:focus-visible {
 
   .info-list > div {
     grid-template-columns: 82px 1fr;
+  }
+}
+
+@media (max-width: 360px) {
+  .place-sheet {
+    right: max(8px, env(safe-area-inset-right, 0px));
+    left: max(8px, env(safe-area-inset-left, 0px));
+    padding: 12px;
+  }
+
+  .place-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .place-fact {
+    padding: 0 8px;
+  }
+
+  .place-utility-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .place-utility-actions button:last-child {
+    grid-column: 1 / -1;
   }
 }
 
@@ -2638,6 +2774,20 @@ a:focus-visible {
 
 .dark .place-note {
   color: #94a3b8;
+}
+
+.dark .service-day-card {
+  border-color: #7c4a12;
+  color: #fdba74;
+  background: #3c2408;
+}
+
+.dark .service-day-card strong {
+  color: #ffedd5;
+}
+
+.dark .service-day-card span {
+  color: #fed7aa;
 }
 
 .dark .place-ev-header {

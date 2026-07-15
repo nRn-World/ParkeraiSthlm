@@ -14,7 +14,6 @@ import {
   ExternalLink,
   Heart,
   Info,
-  Layers3,
   ListFilter,
   LocateFixed,
   MapPin,
@@ -661,7 +660,7 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
     const addressValue = officialProperty(properties, "address", "adress");
     const address = addressValue && !/^<.*saknas>$/i.test(addressValue) ? addressValue : streetName;
     const citation = officialProperty(properties, "citation", "föreskrift", "foreskrift");
-    let otherInfo = officialProperty(properties, "other_info", "beskrivning", "description");
+    const serviceText = officialProperty(properties, "other_info", "beskrivning", "description");
     const tariff = officialProperty(properties, "parking_rate", "avgift", "taxa");
     const placeType = officialProperty(properties, "vf_plats_typ");
     const vehicle = officialProperty(properties, "vehicle", "fordon");
@@ -674,7 +673,7 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
     const tariffMatch = normalize(tariff ?? "").match(/\btaxa\s*([1-5])\b/);
     const tariffId = tariffMatch ? Number(tariffMatch[1]) as TariffId : null;
     const restrictionDetails = officialRuleDetails(properties);
-    otherInfo = [...restrictionDetails, otherInfo].filter(Boolean).join(" · ") || undefined;
+    const otherInfo = restrictionDetails.join(" · ") || undefined;
     const identifier = String(feature.id ?? officialProperty(properties, "id", "objectid", "feature_object_id", "fid") ?? `${lat}-${lng}-${index}`);
     return [{
       id: `stockholm-open-data-${rule}-${identifier}`,
@@ -693,6 +692,7 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
         : isDisabled
           ? "För rörelsehindrade med tillstånd enligt Stockholms stads gällande föreskrift. Kontrollera skyltning på plats."
           : "Tillåten gatuparkering enligt Stockholms stads gällande föreskrift. Kontrollera alltid skyltning på plats."),
+      serviceText,
       disabledSpaces: isDisabled ? 1 : undefined,
       mcSpaces: isMotorcycle ? 1 : undefined,
       source: "stockholm-open-data",
@@ -1113,7 +1113,7 @@ function App() {
       if (cachedRaw) {
         try {
           const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-          if (cached.version === 2 && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+          if (cached.version === 3 && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
             return cached.places;
           }
         } catch {
@@ -1131,7 +1131,7 @@ function App() {
           `${rule}.json`,
         );
         const places = parseOfficialRuleParking(payload, rule).filter((place) => isWithinArea(place, scope));
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 3, places }));
         return places;
       } catch {
         return [];
@@ -1144,7 +1144,7 @@ function App() {
     const missingRules = rules.filter((rule) => !loadedGlobalRulesRef.current.has(rule));
     if (missingRules.length === 0) return rules.reduce((sum, rule) => sum + (globalRuleCountsRef.current.get(rule) ?? 0), 0);
     const results = await Promise.all(missingRules.map(async (rule) => {
-      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v2`;
+      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v3`;
       const cachedRaw = localStorage.getItem(cacheKey);
       if (cachedRaw) {
         try {
@@ -1420,9 +1420,9 @@ function App() {
         pane: "taxAreas",
         color,
         fillColor: color,
-        weight: 1.4,
-        opacity: 0.72,
-        fillOpacity: 0.105,
+        weight: 1.8,
+        opacity: 0.88,
+        fillOpacity: 0.24,
         interactive: true,
       })
         .on("click", (event) => {
@@ -2556,16 +2556,6 @@ function App() {
         </button>
       </div>
 
-      <div className="map-legend">
-        <Layers3 size={15} />
-        <span>Taxa</span>
-        {([1, 2, 3, 4, 5] as TariffId[]).map((tariff) => (
-          <button key={tariff} type="button" onClick={() => selectCategory(tariff, true)} title={`Visa taxa ${tariff}`}>
-            <i style={{ background: TARIFFS[tariff].color }} />{tariff}
-          </button>
-        ))}
-      </div>
-
       <AnimatePresence>
         {selectedParking && (
           <motion.aside
@@ -2590,24 +2580,38 @@ function App() {
               </div>
             </div>
             <div className="place-facts">
-              <div><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParkingTariff ? getCurrentPrice(selectedParkingTariff).label : selectedParking.priceText}</strong></div>
-              <div><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
-              {selectedParking.spaces ? <div><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
-              {(selectedParking.disabledSpaces ?? 0) > 0 ? <div><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
-              {(selectedParking.mcSpaces ?? 0) > 0 ? <div><small>MC</small><strong>{selectedParking.mcSpaces} plats{selectedParking.mcSpaces !== 1 ? "er" : ""}</strong></div> : null}
-              {(selectedParking.evSpaces ?? 0) > 0 ? <div className="place-ev-header"><Zap size={16} /><small>Elladdning</small><strong>{selectedParking.evSpaces} plats{selectedParking.evSpaces !== 1 ? "er" : ""}</strong></div> : null}
-              {selectedParking.evConnections?.map((c, i) => (
-                <div key={i} className="place-ev-conn">
-                  <span className="ev-qty">{c.quantity} ×</span>
-                  <span className="ev-status">{c.status}</span>
-                  <span className="ev-type">{c.type}</span>
-                  <span className="ev-power">{c.powerKW} kW</span>
-                  {c.currentType && <span className="ev-current">{c.currentType}</span>}
-                  {c.amps > 0 && c.voltage > 0 && <span className="ev-av">{c.amps}A {c.voltage}V</span>}
+              <div className="place-fact"><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParkingTariff ? getCurrentPrice(selectedParkingTariff).label : selectedParking.priceText}</strong></div>
+              <div className="place-fact"><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
+              {selectedParking.spaces ? <div className="place-fact"><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
+              {(selectedParking.disabledSpaces ?? 0) > 0 ? <div className="place-fact"><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
+              {(selectedParking.mcSpaces ?? 0) > 0 ? <div className="place-fact"><small>MC</small><strong>{selectedParking.mcSpaces} plats{selectedParking.mcSpaces !== 1 ? "er" : ""}</strong></div> : null}
+              {(selectedParking.evSpaces ?? 0) > 0 ? (
+                <div className="place-ev-details">
+                  <div className="place-ev-header"><Zap size={16} /><small>Elladdning</small><strong>{selectedParking.evSpaces} plats{selectedParking.evSpaces !== 1 ? "er" : ""}</strong></div>
+                  {selectedParking.evConnections?.map((c, i) => (
+                    <div key={i} className="place-ev-conn">
+                      <span className="ev-qty">{c.quantity} ×</span>
+                      <span className="ev-status">{c.status}</span>
+                      <span className="ev-type">{c.type}</span>
+                      <span className="ev-power">{c.powerKW} kW</span>
+                      {c.currentType && <span className="ev-current">{c.currentType}</span>}
+                      {c.amps > 0 && c.voltage > 0 && <span className="ev-av">{c.amps}A {c.voltage}V</span>}
+                    </div>
+                  ))}
+                  {!selectedParking.evConnections ? <span className="place-ev-missing">Ingen detaljerad information om laddkontakter finns tillgänglig för denna plats.</span> : null}
                 </div>
-              ))}
-              {selectedParking.evSpaces && !selectedParking.evConnections ? <span className="place-ev-missing">Ingen detaljerad information om laddkontakter finns tillgänglig för denna plats.</span> : null}
+              ) : null}
             </div>
+            {selectedParking.serviceText ? (
+              <div className="service-day-card">
+                <Clock3 size={18} />
+                <div>
+                  <small>Städgata / servicetid</small>
+                  <strong>{selectedParking.serviceText}</strong>
+                  <span>Gäller den markerade gatusträckan. Kontrollera alltid vägmärket på plats.</span>
+                </div>
+              </div>
+            ) : null}
             <p className="place-note"><CircleAlert size={15} />{selectedParkingTariff ? TARIFFS[selectedParkingTariff].hours : selectedParking.note}</p>
             <div className="place-actions">
               <button type="button" className="primary-action" onClick={() => void buildRoute(selectedParking)} disabled={routeLoading}>
@@ -2659,17 +2663,17 @@ function App() {
               </div>
             </div>
             <div className="place-facts">
-              <div>
+              <div className="place-fact">
                 <small>Pris just nu</small>
                 <strong>
                   {clickedPlace.priceText}
                 </strong>
               </div>
-              <div>
+              <div className="place-fact">
                 <small>Områdestaxa</small>
                 <strong>Se skyltning</strong>
               </div>
-              <div>
+              <div className="place-fact">
                 <small>Avstånd</small>
                 <strong>{formatDistance(distanceKm(focusPosition, [clickedPlace.lat, clickedPlace.lng]))}</strong>
               </div>

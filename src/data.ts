@@ -15,6 +15,7 @@ export type ParkingPlace = {
   free: boolean;
   priceText: string;
   note: string;
+  serviceText?: string;
   spaces?: number;
   disabledSpaces?: number;
   mcSpaces?: number;
@@ -52,35 +53,35 @@ export const STOCKHOLM_CENTER: LatLng = [59.3293, 18.0686];
 // Uppdaterade: Juli 2026
 export const TARIFFS = {
   1: {
-    color: "#ef5b4d",
+    color: "#3e9f9a",
     price: "55 kr/tim",
     shortHours: "Dygnet runt, alla dagar",
     hours: "55 kr/tim, dygnet runt, alla dagar inklusive lördagar, söndagar och helgdagar.",
     area: "Centrala city: öster om Klara sjö, söder om Kungsgatan, väster om Birger Jarlsgatan/Nybrokajen, norr om Norrström/Stallgatan.",
   },
   2: {
-    color: "#d94f9d",
+    color: "#ce4588",
     price: "31 kr/tim",
     shortHours: "Vard 07–21 / Fredag+Lör+Helgdag 09–19",
     hours: "Vardagar (utom dag före sön/helgdag): 31 kr/tim 07–21, övrig tid 20 kr/tim. Vardag före sön/helgdag och sön/helgdag: 31 kr/tim 09–19, övrig tid 20 kr/tim. Avgift dygnet runt.",
     area: "Öster om Scheelegatan (Kungsholmen), söder om Tegnérgatan/Karlavägen, väster om Karlaplan/Narvavägen/Strandvägen, samt Blasieholmen, Gamla stan och Norr Mälarstrand till Kungsholms torg.",
   },
   3: {
-    color: "#526fe8",
+    color: "#4e8fc4",
     price: "20 kr/tim",
     shortHours: "Vardagar 07–19 / Lördag 11–17",
     hours: "Vardagar (utom dag före sön/helgdag): 20 kr/tim 07–19. Vardag före sön/helgdag (t.ex. lördag): 15 kr/tim 11–17. Övrig tid: ingen avgift.",
     area: "Vasastan, Östermalm, Kungsholmen, Södermalm, Hammarby Sjöstad, Liljeholmen, Gullmarsplan och några gator i Kista.",
   },
   4: {
-    color: "#159783",
+    color: "#805a97",
     price: "10 kr/tim",
     shortHours: "Vardagar 07–19 / Lördag 11–17",
     hours: "Vardagar (utom dag före sön/helgdag): 10 kr/tim 07–19. Vardag före sön/helgdag (t.ex. lördag): 10 kr/tim 11–17. Övrig tid: ingen avgift.",
     area: "Ekhagen, Traneberg, Stora Essingen, Midsommarkransen, Årsta, Enskede och Hammarbyhöjden.",
   },
   5: {
-    color: "#80a63b",
+    color: "#d3725f",
     price: "5 kr/tim",
     shortHours: "Vardagar 07–19",
     hours: "Vardagar (utom dag före sön/helgdag): 5 kr/tim 07–19. Övrig tid (inkl. lördag, söndag och helgdag): ingen avgift.",
