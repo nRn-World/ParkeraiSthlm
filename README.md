@@ -206,3 +206,9 @@ GitHub: [github.com/nRn-World](https://github.com/nRn-World)
 ---
 
 *Parkera smart. Kör säkert. Kontrollera alltid skylten på gatan.* 🚗
+
+---
+
+☕ **Support development**: [Buy me a coffee 💜](https://ko-fi.com/nrnworld)
+
+Created by ❤️ © nRn World
