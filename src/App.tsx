@@ -345,12 +345,20 @@ function formatDistance(km: number) {
   return `${km.toFixed(1).replace(".", ",")} km`;
 }
 
-function parkedCarIcon() {
+// Den parkerade bilen ska gå att hitta direkt i ett hav av blå P-markörer. Därför egen
+// färg (amber) i stället för kartans blå, större ring, mjuk glöd runt om och en etikett
+// med avståndet från dig. Se .parked-car-marker i index.css – storlek och ankarpunkt
+// (nålen längst ner) hänger ihop med måtten där.
+function parkedCarIcon(distanceLabel?: string) {
   return L.divIcon({
     className: "parked-car-marker-wrap",
-    html: '<div class="parked-car-marker"><span>🚙</span><b>MIN BIL</b></div>',
-    iconSize: [76, 58],
-    iconAnchor: [10, 54],
+    html: `<div class="parked-car-marker">
+      <span class="parked-car-glow"></span>
+      <span class="parked-car-pin"><i>🚙</i></span>
+      <b>MIN BIL${distanceLabel ? `<em>${distanceLabel}</em>` : ""}</b>
+    </div>`,
+    iconSize: [220, 112],
+    iconAnchor: [110, 106],
   });
 }
 
@@ -1907,9 +1915,13 @@ function App() {
     if (!layer) return;
     layer.clearLayers();
     if (!parkedCar) return;
+    // Avståndet står på markören bara när vi vet var användaren är – annars vore det en gissning.
+    const distanceLabel = userPosition
+      ? formatDistance(distanceKm(userPosition, [parkedCar.lat, parkedCar.lng]))
+      : undefined;
     L.marker([parkedCar.lat, parkedCar.lng], {
       pane: "parkedCar",
-      icon: parkedCarIcon(),
+      icon: parkedCarIcon(distanceLabel),
       keyboard: true,
       title: "Min parkerade bil",
     })
@@ -1918,7 +1930,7 @@ function App() {
         setParkedCarOpen(true);
       })
       .addTo(layer);
-  }, [parkedCar]);
+  }, [parkedCar, userPosition]);
 
   const matchesCategory = useCallback((place: ParkingPlace) => {
     if (category === "all") return true;
