@@ -345,6 +345,10 @@ function formatDistance(km: number) {
   return `${km.toFixed(1).replace(".", ",")} km`;
 }
 
+// Bilen ritas som en riktig bil (lucides "car", samma form som ikonerna i gränssnittet)
+// i stället för en emoji – emojin blev en vit klump när den färgades om i liten storlek.
+const PARKED_CAR_GLYPH = `<svg class="parked-car-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/></svg>`;
+
 // Den parkerade bilen ska gå att hitta direkt i ett hav av blå P-markörer. Därför egen
 // färg (amber) i stället för kartans blå, större ring, mjuk glöd runt om och en etikett
 // med avståndet från dig. Se .parked-car-marker i index.css – storlek och ankarpunkt
@@ -354,7 +358,7 @@ function parkedCarIcon(distanceLabel?: string) {
     className: "parked-car-marker-wrap",
     html: `<div class="parked-car-marker">
       <span class="parked-car-glow"></span>
-      <span class="parked-car-pin"><i>🚙</i></span>
+      <span class="parked-car-pin">${PARKED_CAR_GLYPH}</span>
       <b>MIN BIL${distanceLabel ? `<em>${distanceLabel}</em>` : ""}</b>
     </div>`,
     iconSize: [220, 112],

@@ -1080,10 +1080,11 @@ a:focus-visible {
   pointer-events: auto;
 }
 
-.parked-car-pin i {
-  font-size: 26px;
-  font-style: normal;
-  filter: grayscale(1) brightness(0) invert(1);
+.parked-car-glyph {
+  width: 30px;
+  height: 30px;
+  color: #fff;
+  filter: drop-shadow(0 1px 1px rgba(120, 52, 0, 0.45));
 }
 
 .parked-car-pin::before {
