@@ -4,6 +4,8 @@ import "leaflet/dist/leaflet.css";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Accessibility,
+  Bell,
+  BellRing,
   Bike,
   Building2,
   CarFront,
@@ -72,6 +74,7 @@ type RouteInfo = {
 type SearchLocation = { name: string; lat: number; lng: number; type: string };
 type InstallPlatform = "android" | "ios";
 type VehicleProfile = "car" | "ev" | "mc" | "disabled";
+type ResultSort = "distance" | "price" | "free";
 type ParkedCar = {
   lat: number;
   lng: number;
@@ -80,6 +83,11 @@ type ParkedCar = {
   note: string;
   spot: string;
   source: "parking" | "gps" | "search" | "map";
+  // Taxeläget sparas vid parkeringstillfället. Äldre sparade bilar saknar fälten,
+  // så de läses som null och appen visar då bara platsen.
+  tariff: TariffId | null;
+  tariffLabel: string | null;
+  reminder: boolean;
 };
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -102,6 +110,18 @@ const AREA_SEARCH_RADIUS_KM = 1.15;
 const FAVORITES_STORAGE_KEY = "parksthlm-favorites-v1";
 const PARKED_CAR_STORAGE_KEY = "parksthlm-parked-car-v1";
 const VEHICLE_PROFILE_STORAGE_KEY = "parksthlm-vehicle-profile-v1";
+// Listan visar en sida i taget – annars går resten av de tusentals platserna inte att nå.
+const RESULTS_PAGE_SIZE = 20;
+const RESULT_SORTS: { value: ResultSort; label: string }[] = [
+  { value: "distance", label: "Närmast" },
+  { value: "price", label: "Billigast" },
+  { value: "free", label: "Gratis nu" },
+];
+// Hur långt innan en avgiftsändring som påminnelsen ska komma.
+const PARKING_REMINDER_LEAD_MINUTES = 15;
+// Höjs när tolkningen av Trafikkontorets föreskrifter ändras – då måste gamla cachade
+// poster läsas om i stället för att ligga kvar utan nya fält.
+const OFFICIAL_DATA_CACHE_VERSION = 5;
 const OFFLINE_MIN_ZOOM = 10;
 const OFFLINE_MAX_ZOOM = 16;
 // Tak för offline-nedladdningen: skyddar telefonens lagring och OpenStreetMaps tileservrar.
@@ -199,6 +219,58 @@ function placeKindLabel(place: ParkingPlace) {
   if (amenity) return amenity;
   if (place.kind === "surface") return "Markparkering";
   return "Gatuparkering";
+}
+
+// Rubrik och underrad i listor. För gatuföreskrifter är gatunamnet det användaren söker –
+// föreskriftstypen ("P-avgift endast besök") hör hemma på den mindre raden i stället
+// för att tränga undan gatunamnet som rubrik.
+function placeListCopy(place: ParkingPlace) {
+  const street = place.address.trim();
+  const isStreetAddress = street.length > 0 && !/^-?\d+(\.\d+)?,\s*-?\d+(\.\d+)?$/.test(street);
+  const isOfficialRule = place.source === "stockholm-open-data";
+  if (isStreetAddress && (isOfficialRule || place.name === street)) {
+    return {
+      heading: street,
+      detail: place.typeLabel ?? (isOfficialRule ? place.area : `${place.address} · ${place.area}`),
+      isStreetHeading: true,
+    };
+  }
+  return { heading: place.name, detail: `${place.address} · ${place.area}`, isStreetHeading: false };
+}
+
+function formatClock(date: Date) {
+  return date.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDuration(ms: number) {
+  const totalMinutes = Math.max(0, Math.round(ms / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes} min`;
+  if (minutes === 0) return `${hours} tim`;
+  return `${hours} tim ${minutes} min`;
+}
+
+// Nästa gång priset för en taxa ändras. Skiftena ligger på hela klockslag (07:00, 19:00 …),
+// så stegen läggs på absoluta 5-minutersgränser och träffar därför skiftena exakt – annars
+// skulle nedräkningen kunna peka några minuter fel.
+function nextPriceChange(tariff: TariffId, from: Date) {
+  if (tariff === 1) return null;
+  const stepMs = 5 * 60 * 1000;
+  const startAmount = getCurrentPrice(tariff, from).amount;
+  const end = from.getTime() + 72 * 60 * 60 * 1000;
+  for (let time = Math.floor(from.getTime() / stepMs) * stepMs + stepMs; time <= end; time += stepMs) {
+    const moment = new Date(time);
+    const amount = getCurrentPrice(tariff, moment).amount;
+    if (amount !== startAmount) return { at: moment, amount };
+  }
+  return null;
+}
+
+// Gratis just nu = uttryckligen avgiftsfri, eller en taxa som kostar 0 kr vid den här tiden.
+function isFreeNow(place: ParkingPlace, priceByTariff: Map<TariffId, number>) {
+  if (place.free) return true;
+  return isTariffId(place.tariff) && priceByTariff.get(place.tariff) === 0;
 }
 
 function parkingIcon(place: ParkingPlace, selected: boolean) {
@@ -807,6 +879,7 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
     return [{
       id: `stockholm-open-data-${rule}-${identifier}`,
       name: isMotorcycle ? "MC-parkering" : isDisabled ? "Parkering för rörelsehindrade" : readableName || "Gatuparkering",
+      typeLabel: readableName && readableName !== streetName ? readableName : undefined,
       address: address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
       area: district ? `Stockholms stad · ${district}` : "Stockholms stad",
       lat,
@@ -1156,6 +1229,11 @@ function App() {
   const [clickedAddress, setClickedAddress] = useState<string | null>(null);
   const [clickedLoading, setClickedLoading] = useState(false);
   const [searchFocused, setSearchFocused] = useState(false);
+  const [resultSort, setResultSort] = useState<ResultSort>("distance");
+  const [resultWindow, setResultWindow] = useState({ key: "", limit: RESULTS_PAGE_SIZE });
+  // Tickar medan en bil är sparad så att nedräkningen och påminnelsen följer klockan.
+  const [clock, setClock] = useState(() => Date.now());
+  const parkingReminderFiredRef = useRef<number | null>(null);
 
   useEffect(() => {
     routeInfoRef.current = routeInfo;
@@ -1169,6 +1247,54 @@ function App() {
     if (parkedCar) localStorage.setItem(PARKED_CAR_STORAGE_KEY, JSON.stringify(parkedCar));
     else localStorage.removeItem(PARKED_CAR_STORAGE_KEY);
   }, [parkedCar]);
+
+  // Klockan som nedräkningen och påminnelsen räknar mot. Intervallet finns bara när en
+  // bil är sparad, så appen står helt stilla annars.
+  useEffect(() => {
+    if (!parkedCar) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 20_000);
+    return () => window.clearInterval(timer);
+  }, [parkedCar]);
+
+  // Poster från äldre tolkningar av föreskriftsdatan läses aldrig mer men tar lagring –
+  // rensa dem en gång per start i stället för att låta dem ligga kvar.
+  useEffect(() => {
+    const prefix = "parksthlm-stockholm-open-data-";
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith(prefix)) continue;
+      const versionInKey = Number(key.match(/-all-v(\d+)$/)?.[1] ?? Number.NaN);
+      if (Number.isFinite(versionInKey)) {
+        if (versionInKey !== OFFICIAL_DATA_CACHE_VERSION) localStorage.removeItem(key);
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(localStorage.getItem(key) ?? "") as { version?: number };
+        if (parsed.version !== OFFICIAL_DATA_CACHE_VERSION) localStorage.removeItem(key);
+      } catch {
+        localStorage.removeItem(key);
+      }
+    }
+  }, []);
+
+  const parkedCarTariff = parkedCar && isTariffId(parkedCar.tariff) ? parkedCar.tariff : null;
+  const parkedCarMoment = useMemo(() => new Date(clock), [clock]);
+  const parkedCarPrice = useMemo(
+    () => (parkedCarTariff ? getCurrentPrice(parkedCarTariff, parkedCarMoment) : null),
+    [parkedCarMoment, parkedCarTariff],
+  );
+  const parkedCarChange = useMemo(
+    () => (parkedCarTariff ? nextPriceChange(parkedCarTariff, parkedCarMoment) : null),
+    [parkedCarMoment, parkedCarTariff],
+  );
+  const parkedCarStatus = useMemo(() => {
+    if (!parkedCar) return null;
+    if (!parkedCarPrice) return "Taxan är inte karterad här – kontrollera skyltningen på gatan.";
+    if (!parkedCarChange) return "Samma avgift dygnet runt.";
+    const when = `${formatClock(parkedCarChange.at)} om ${formatDuration(parkedCarChange.at.getTime() - clock)}`;
+    if (parkedCarPrice.amount === 0) return `Avgift ${parkedCarChange.amount} kr/tim börjar ${when}.`;
+    if (parkedCarChange.amount === 0) return `Gratis parkering från ${when}.`;
+    return `Avgiften ändras till ${parkedCarChange.amount} kr/tim ${when}.`;
+  }, [clock, parkedCar, parkedCarChange, parkedCarPrice]);
 
   // Synka Dark Mode i DOM:en
   useEffect(() => {
@@ -1211,6 +1337,32 @@ function App() {
     setNotice(message);
     window.setTimeout(() => setNotice(null), 3600);
   }, []);
+
+  // Påminnelse: avgiftsändringar som rör gratis parkering är de som betyder något –
+  // antingen att gratisperioden tar slut eller att den börjar.
+  useEffect(() => {
+    if (!parkedCar?.reminder || !parkedCarTariff) return;
+    const now = new Date(clock);
+    const change = nextPriceChange(parkedCarTariff, now);
+    if (!change) return;
+    const price = getCurrentPrice(parkedCarTariff, now);
+    if (change.amount !== 0 && price.amount !== 0) return;
+    const minutesLeft = (change.at.getTime() - now.getTime()) / 60_000;
+    if (minutesLeft > PARKING_REMINDER_LEAD_MINUTES || minutesLeft < 0) return;
+    if (parkingReminderFiredRef.current === change.at.getTime()) return;
+    parkingReminderFiredRef.current = change.at.getTime();
+    const message = change.amount === 0
+      ? `Gratis parkering från ${formatClock(change.at)}.`
+      : `Avgiften börjar ${formatClock(change.at)} med ${change.amount} kr/tim – flytta bilen eller betala.`;
+    showNotice(message);
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification("Din parkerade bil", { body: message, tag: "parksthlm-parked-car" });
+      }
+    } catch {
+      // Notiser är ett tillägg – appens egen ruta visas ändå.
+    }
+  }, [clock, parkedCar, parkedCarTariff, showNotice]);
 
   const fetchNearbyOsmParking = useCallback(async (scope: AreaScope) => {
     if (!navigator.onLine) return;
@@ -1309,7 +1461,7 @@ function App() {
         try {
           const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
           // Versionen höjs när tolkningen av föreskrifterna ändras, så att gamla cachade poster rensas.
-          if (cached.version === 4 && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+          if (cached.version === OFFICIAL_DATA_CACHE_VERSION && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
             return cached.places;
           }
         } catch {
@@ -1327,7 +1479,7 @@ function App() {
           `${rule}.json`,
         );
         const places = parseOfficialRuleParking(payload, rule).filter((place) => isWithinArea(place, scope));
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 4, places }));
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: OFFICIAL_DATA_CACHE_VERSION, places }));
         return places;
       } catch {
         return [];
@@ -1340,7 +1492,7 @@ function App() {
     const missingRules = rules.filter((rule) => !loadedGlobalRulesRef.current.has(rule));
     if (missingRules.length === 0) return rules.reduce((sum, rule) => sum + (globalRuleCountsRef.current.get(rule) ?? 0), 0);
     const results = await Promise.all(missingRules.map(async (rule) => {
-      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v4`;
+      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v${OFFICIAL_DATA_CACHE_VERSION}`;
       const cachedRaw = localStorage.getItem(cacheKey);
       if (cachedRaw) {
         try {
@@ -1765,6 +1917,7 @@ function App() {
     [areaScope, category, displayParking, hasOfficialStreetData, limitToArea, matchesCategory],
   );
   const selectedParkingTariff = selectedParking && isTariffId(selectedParking.tariff) ? selectedParking.tariff : null;
+  const selectedParkingCopy = selectedParking ? placeListCopy(selectedParking) : null;
 
   const loadParkingAround = useCallback(async (nextCategory: Category = category, requestedScope?: AreaScope) => {
     if (!online) {
@@ -2465,15 +2618,56 @@ function App() {
     setParkedCarOpen(true);
   };
 
+  // Taxan på den plats som sparas: den valda parkeringen om det finns en, annars
+  // taxekartan/gatumarkeringarna vid positionen. Snapshoten gör att nedräkningen
+  // fungerar även efter att data hämtats på nytt eller telefonen varit offline.
+  const parkedCarCandidateTariff = useMemo(() => {
+    if (parkedCarCandidate.source === "parking" && selectedParking) {
+      return isTariffId(selectedParking.tariff) ? selectedParking.tariff : null;
+    }
+    return tariffAtPosition([parkedCarCandidate.lat, parkedCarCandidate.lng])?.tariff ?? null;
+  }, [parkedCarCandidate.lat, parkedCarCandidate.lng, parkedCarCandidate.source, selectedParking]);
+
+  const parkedCarCandidateLabel = useMemo(() => {
+    if (parkedCarCandidateTariff === null) return null;
+    if (parkedCarCandidate.source === "parking" && selectedParking) return `Taxa ${parkedCarCandidateTariff} enligt kartan`;
+    const point = tariffAtPosition([parkedCarCandidate.lat, parkedCarCandidate.lng]);
+    return point?.street ? `Taxa ${parkedCarCandidateTariff} · ${point.street}` : `Taxa ${parkedCarCandidateTariff} enligt taxekartan`;
+  }, [parkedCarCandidate.lat, parkedCarCandidate.lng, parkedCarCandidate.source, parkedCarCandidateTariff, selectedParking]);
+
   const saveParkedCar = () => {
     setParkedCar({
       ...parkedCarCandidate,
       savedAt: Date.now(),
       note: parkedCarNote.trim(),
       spot: parkedCarSpot.trim(),
+      tariff: parkedCarCandidateTariff,
+      tariffLabel: parkedCarCandidateLabel,
+      // Påminnelsevalet följer med mellan parkeringar – den som vill ha påminnelse vill ha det varje gång.
+      reminder: parkedCar?.reminder ?? false,
     });
     setParkedCarEditing(false);
-    showNotice("Bilens plats sparades");
+    showNotice(parkedCarCandidateTariff
+      ? `Bilens plats sparades · ${getCurrentPrice(parkedCarCandidateTariff).label}`
+      : "Bilens plats sparades");
+  };
+
+  const toggleParkingReminder = () => {
+    if (!parkedCar) return;
+    const next = !parkedCar.reminder;
+    setParkedCar({ ...parkedCar, reminder: next });
+    if (!next) {
+      showNotice("Påminnelsen är avstängd");
+      return;
+    }
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        void Notification.requestPermission().catch(() => "denied");
+      }
+    } catch {
+      // Utan stöd för notiser används appens egen ruta.
+    }
+    showNotice(`Påminnelse på · ${PARKING_REMINDER_LEAD_MINUTES} min innan avgiften ändras`);
   };
 
   const parkedCarAsPlace = parkedCar ? {
@@ -2546,7 +2740,34 @@ function App() {
     };
   }, [anyDialogOpen]);
 
-  const visibleResults = searchMatches.slice(0, query ? 30 : 20);
+  // Prisbilden just nu är gemensam för hela listan – räkna den en gång per sortering.
+  const priceNowByTariff = useMemo(() => {
+    const now = new Date();
+    const amounts = new Map<TariffId, number>();
+    ([1, 2, 3, 4, 5] as TariffId[]).forEach((tariffId) => amounts.set(tariffId, getCurrentPrice(tariffId, now).amount));
+    return amounts;
+  }, [clock, resultSort]);
+
+  const sortedResults = useMemo(() => {
+    if (resultSort === "distance") return searchMatches;
+    const amountOf = (place: ParkingPlace) => {
+      if (place.free) return 0;
+      // Okarterad taxa sorteras sist i stället för att hamna överst som "0 kr".
+      return isTariffId(place.tariff) ? priceNowByTariff.get(place.tariff)! : Number.POSITIVE_INFINITY;
+    };
+    const sorted = [...searchMatches];
+    if (resultSort === "price") {
+      sorted.sort((first, second) => amountOf(first.place) - amountOf(second.place) || first.distance - second.distance);
+    } else {
+      sorted.sort((first, second) => (isFreeNow(second.place, priceNowByTariff) ? 1 : 0) - (isFreeNow(first.place, priceNowByTariff) ? 1 : 0) || first.distance - second.distance);
+    }
+    return sorted;
+  }, [priceNowByTariff, resultSort, searchMatches]);
+
+  const resultKey = `${category}|${query}|${limitToArea ? areaScope?.label ?? "" : ""}`;
+  const resultLimit = resultWindow.key === resultKey ? resultWindow.limit : RESULTS_PAGE_SIZE;
+  const visibleResults = sortedResults.slice(0, resultLimit);
+  const hiddenResultCount = sortedResults.length - visibleResults.length;
 
   return (
     <main className={`app-shell ${online ? "is-online" : "is-offline"}`}>
@@ -2724,8 +2945,25 @@ function App() {
                 </button>
               </div>
 
+              <div className="results-sort" role="group" aria-label="Sortera parkeringslistan">
+                {RESULT_SORTS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={resultSort === option.value ? "active" : ""}
+                    aria-pressed={resultSort === option.value}
+                    onClick={() => setResultSort(option.value)}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="result-list">
-                {visibleResults.map(({ place, distance }, index) => (
+                {visibleResults.map(({ place, distance }, index) => {
+                  const copy = placeListCopy(place);
+                  const freeNow = isFreeNow(place, priceNowByTariff);
+                  return (
                   <motion.button
                     type="button"
                     key={place.id}
@@ -2739,16 +2977,26 @@ function App() {
                       {(place.evSpaces ?? 0) > 0 ? <Zap size={17} /> : (place.disabledSpaces ?? 0) > 0 ? <Accessibility size={17} /> : (place.mcSpaces ?? 0) > 0 ? <Bike size={17} /> : place.kind === "garage" ? <Building2 size={17} /> : <ParkingCircle size={19} />}
                     </span>
                     <span className="result-copy">
-                      <strong>{place.name}</strong>
-                      <small>{place.address} · {place.area}</small>
+                      <strong>{copy.heading}</strong>
+                      <small>{copy.detail}</small>
                       <span>
-                        <b className={place.free ? "free" : ""}>{placeTariffLabel(place)}</b>
+                        <b className={freeNow ? "free" : ""}>{place.free ? "Avgiftsfri" : freeNow ? "Gratis nu" : placeTariffLabel(place)}</b>
                         <i>{placeKindLabel(place)}</i>
                       </span>
                     </span>
                     <span className="result-distance">{formatDistance(distance)}<Navigation size={14} /></span>
                   </motion.button>
-                ))}
+                  );
+                })}
+                {hiddenResultCount > 0 && (
+                  <button
+                    type="button"
+                    className="show-more-results"
+                    onClick={() => setResultWindow({ key: resultKey, limit: resultLimit + RESULTS_PAGE_SIZE })}
+                  >
+                    <ChevronDown size={15} /> Visa fler · {visibleResults.length} av {sortedResults.length}
+                  </button>
+                )}
                 {visibleResults.length === 0 && (
                   <div className="empty-results">
                     <Search size={25} />
@@ -2814,8 +3062,11 @@ function App() {
               </span>
               <div>
                 <small>{placeKindLabel(selectedParking)}</small>
-                <h2>{selectedParking.name}</h2>
-                <p>{selectedParking.address}, {selectedParking.area}</p>
+                <h2>{selectedParkingCopy?.heading}</h2>
+                <p>
+                  {selectedParkingCopy?.detail}
+                  {selectedParkingCopy && !selectedParkingCopy.detail.includes(selectedParking.area) ? `, ${selectedParking.area}` : ""}
+                </p>
                 <span className="place-tariff" style={{ background: placeColor(selectedParking) }}>
                   {placeTariffLabel(selectedParking)}
                 </span>
@@ -2972,16 +3223,19 @@ function App() {
               <p>Dina sparade platser finns kvar på den här enheten.</p>
               {favorites.length ? (
                 <div className="saved-place-list">
-                  {favorites.map((favorite) => (
+                  {favorites.map((favorite) => {
+                    const copy = placeListCopy(favorite);
+                    return (
                     <div className="saved-place-row" key={favorite.id}>
                       <button type="button" className="saved-place-main" onClick={() => showFavorite(favorite)}>
                         <span style={{ "--place-color": placeColor(favorite) } as React.CSSProperties}><ParkingCircle size={17} /></span>
-                        <span><strong>{favorite.name}</strong><small>{favorite.address} · {placeTariffLabel(favorite)}</small></span>
+                        <span><strong>{copy.heading}</strong><small>{copy.detail} · {placeTariffLabel(favorite)}</small></span>
                         <Navigation size={16} />
                       </button>
                       <button type="button" className="saved-place-remove" onClick={() => toggleFavorite(favorite)} aria-label={`Ta bort ${favorite.name}`}><Trash2 size={16} /></button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="feature-empty"><Heart size={27} /><strong>Inga favoriter ännu</strong><span>Öppna en parkering och tryck på Favorit.</span></div>
@@ -3001,6 +3255,22 @@ function App() {
               {parkedCar && !parkedCarEditing ? (
                 <>
                   <p className="saved-car-status"><Clock3 size={15} /> Sparad {new Date(parkedCar.savedAt).toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" })}</p>
+                  <div className={`car-price-card ${parkedCarPrice ? (parkedCarPrice.amount === 0 ? "is-free" : "is-paid") : "is-unknown"}`}>
+                    <span className="car-price-amount">
+                      {parkedCarPrice ? (parkedCarPrice.amount === 0 ? "Gratis just nu" : `${parkedCarPrice.amount} kr/tim just nu`) : "Taxa ej karterad här"}
+                    </span>
+                    <span className="car-price-next">{parkedCarStatus}</span>
+                    {parkedCar.tariffLabel && <small>{parkedCar.tariffLabel}</small>}
+                  </div>
+                  {parkedCarTariff ? (
+                    <button type="button" className={`reminder-toggle ${parkedCar.reminder ? "is-on" : ""}`} aria-pressed={parkedCar.reminder} onClick={toggleParkingReminder}>
+                      {parkedCar.reminder ? <BellRing size={17} /> : <Bell size={17} />}
+                      <span>
+                        {parkedCar.reminder ? "Påminnelse är på" : "Påminn mig innan avgiften ändras"}
+                        <small>{parkedCar.reminder ? `Varnar ${PARKING_REMINDER_LEAD_MINUTES} min innan gratisperioden tar slut eller avgiften börjar` : "Du får en notis innan gratisperioden tar slut"}</small>
+                      </span>
+                    </button>
+                  ) : null}
                   <div className="parked-car-details">
                     <div><small>Plats</small><strong>{parkedCar.address}</strong><span>{parkedCar.lat.toFixed(5)}, {parkedCar.lng.toFixed(5)}</span></div>
                     {parkedCar.spot && <div><small>Våning / plats</small><strong>{parkedCar.spot}</strong></div>}
@@ -3016,7 +3286,7 @@ function App() {
               ) : (
                 <>
                   <p>Platsen väljs i ordningen: vald parkering, GPS, vald kartposition, sökt plats och sist kartans mittpunkt.</p>
-                  <div className="candidate-location"><MapPin size={18} /><span><small>Sparas från {parkedCarCandidate.source === "parking" ? "vald parkering" : parkedCarCandidate.source === "gps" ? "GPS" : parkedCarCandidate.source === "search" ? "sökning" : "kartan"}</small><strong>{parkedCarCandidate.address}</strong></span></div>
+                  <div className="candidate-location"><MapPin size={18} /><span><small>Sparas från {parkedCarCandidate.source === "parking" ? "vald parkering" : parkedCarCandidate.source === "gps" ? "GPS" : parkedCarCandidate.source === "search" ? "sökning" : "kartan"}</small><strong>{parkedCarCandidate.address}</strong>{parkedCarCandidateTariff && <em>{`Taxa ${parkedCarCandidateTariff} · ${getCurrentPrice(parkedCarCandidateTariff).label}`}</em>}</span></div>
                   <div className="feature-form">
                     <label><span>Våning eller plats <small>valfritt</small></span><input value={parkedCarSpot} onChange={(event) => setParkedCarSpot(event.target.value)} maxLength={40} placeholder="T.ex. plan 2, plats 48" /></label>
                     <label><span>Anteckning <small>valfritt</small></span><input value={parkedCarNote} onChange={(event) => setParkedCarNote(event.target.value)} maxLength={80} placeholder="T.ex. nära den blå entrén" /></label>

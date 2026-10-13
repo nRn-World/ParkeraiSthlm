@@ -605,6 +605,59 @@ a:focus-visible {
   color: #1266ee;
 }
 
+/* Sorteringen använder samma språk som snabbfiltren så att panelen känns enhetlig. */
+.results-sort {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 0 16px 9px;
+}
+
+.results-sort button {
+  flex: 1;
+  height: 30px;
+  border: 1px solid #dce4e3;
+  border-radius: 9px;
+  color: #566773;
+  background: #fff;
+  font-size: 10.5px;
+  font-weight: 720;
+  cursor: pointer;
+  transition: 0.18s ease;
+}
+
+.results-sort button:hover {
+  border-color: #b7c4c7;
+}
+
+.results-sort button.active {
+  border-color: #182c41;
+  color: #fff;
+  background: #182c41;
+}
+
+.show-more-results {
+  display: flex;
+  width: 100%;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 6px 0 4px;
+  border: 1px dashed #cdd8d7;
+  border-radius: 12px;
+  color: #4c6975;
+  background: #f7faf9;
+  font-size: 11px;
+  font-weight: 730;
+  cursor: pointer;
+}
+
+.show-more-results:hover {
+  border-color: #9fb3b6;
+  color: #263746;
+}
+
 .empty-results {
   display: flex;
   min-height: 160px;
@@ -1578,6 +1631,48 @@ a:focus-visible {
 .feature-empty span { margin-top: 4px; font-size: 10px; }
 
 .saved-car-status { display: flex; align-items: center; gap: 6px; color: #087f98 !important; font-weight: 700; }
+
+/* Avgiftsläget för den parkerade bilen: grönt när det är gratis, gult när det kostar. */
+.car-price-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+  padding: 12px 13px;
+  border: 1px solid #dbe4ea;
+  border-radius: 13px;
+  background: #f6f9fb;
+}
+.car-price-card .car-price-amount { color: #22394a; font-size: 15px; font-weight: 800; }
+.car-price-card .car-price-next { color: #5d7383; font-size: 10.5px; font-weight: 620; }
+.car-price-card small {
+  color: #8b979e; font-size: 9px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.car-price-card.is-free { border-color: #bfe8d3; background: #f0fbf5; }
+.car-price-card.is-free .car-price-amount { color: #10714f; }
+.car-price-card.is-paid { border-color: #f0dab8; background: #fffaf0; }
+.car-price-card.is-paid .car-price-amount { color: #96601a; }
+
+.reminder-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 11px;
+  border: 1px solid #dce4e3;
+  border-radius: 12px;
+  color: #40525f;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+.reminder-toggle > svg { flex: 0 0 auto; color: #7c8b95; }
+.reminder-toggle > span { display: flex; min-width: 0; flex-direction: column; gap: 2px; font-size: 11.5px; font-weight: 760; }
+.reminder-toggle small { color: #8b979e; font-size: 9px; font-weight: 600; }
+.reminder-toggle.is-on { border-color: #bcd9a8; color: #2f5c22; background: #f3fbed; }
+.reminder-toggle.is-on > svg { color: #4d8b2f; }
+.candidate-location em { color: #118aa8; font-size: 9.5px; font-style: normal; font-weight: 720; }
 .parked-car-details { display: grid; gap: 0; margin-top: 16px; border-top: 1px solid #e7eceb; }
 .parked-car-details > div {
   display: flex; flex-direction: column; gap: 3px; padding: 11px 0;
@@ -2982,6 +3077,22 @@ a:focus-visible {
 .dark .feature-form label { color: #f8fafc; }
 .dark .parked-car-details, .dark .parked-car-details > div { border-color: #334155; }
 .dark .candidate-location { border-color: #155e75; background: #083344; }
+.dark .candidate-location em { color: #67e8f9; }
+.dark .car-price-card { border-color: #334155; background: #1e293b; }
+.dark .car-price-card .car-price-amount { color: #f8fafc; }
+.dark .car-price-card .car-price-next { color: #cbd5e1; }
+.dark .car-price-card small { color: #94a3b8; }
+.dark .car-price-card.is-free { border-color: #166534; background: #052e1b; }
+.dark .car-price-card.is-free .car-price-amount { color: #6ee7b7; }
+.dark .car-price-card.is-paid { border-color: #78350f; background: #2c1a06; }
+.dark .car-price-card.is-paid .car-price-amount { color: #fcd34d; }
+.dark .reminder-toggle { border-color: #334155; color: #f8fafc; background: #1e293b; }
+.dark .reminder-toggle small { color: #94a3b8; }
+.dark .reminder-toggle.is-on { border-color: #166534; color: #a7f3d0; background: #052e1b; }
+.dark .results-sort button { border-color: #334155; color: #cbd5e1; background: #1e293b; }
+.dark .results-sort button.active { border-color: #1266ee; color: #fff; background: #1266ee; }
+.dark .show-more-results { border-color: #334155; color: #cbd5e1; background: #1e293b; }
+.dark .show-more-results:hover { border-color: #475569; color: #f8fafc; }
 .dark .vehicle-profile-grid button.active { border-color: #38bdf8; background: #0c4a6e; }
 .dark .vehicle-profile-grid button > span { color: #7dd3fc; background: #0c4a6e; }
 .dark .feature-action-grid .danger-action { border-color: #7f1d1d; color: #fca5a5; background: #3f1515; }

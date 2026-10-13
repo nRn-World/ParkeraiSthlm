@@ -7,6 +7,9 @@ export type ParkingPlace = {
   name: string;
   address: string;
   area: string;
+  // För gatuföreskrifter där `name` är gatunamnet: den underliggande föreskriftstypen
+  // (t.ex. "P-avgift endast besök") så att listan kan visa gatunamn som rubrik.
+  typeLabel?: string;
   lat: number;
   lng: number;
   positions?: LatLng[];
