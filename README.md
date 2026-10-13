@@ -118,6 +118,14 @@ npm run build
 
 Den färdiga filen finns i `dist/index.html` och kan öppnas direkt i valfri webbläsare – utan webbserver.
 
+### Steg 5 – Kvalitetskontroll
+
+```bash
+npm run typecheck
+```
+
+Kör TypeScript-kontrollen utan att bygga. Rekommenderas före varje pull request.
+
 ---
 
 ## 📂 Projektstruktur

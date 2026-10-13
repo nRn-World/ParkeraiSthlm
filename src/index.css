@@ -282,8 +282,31 @@ a:focus-visible {
   flex: 0 0 auto;
   gap: 6px;
   overflow-x: auto;
-  padding: 0 14px 12px;
+  padding: 0 14px 10px;
   border-bottom: 1px solid #e7eceb;
+  scrollbar-width: thin;
+  scrollbar-color: #c7d0d1 transparent;
+}
+
+.quick-filters::-webkit-scrollbar {
+  height: 6px;
+}
+
+.quick-filters::-webkit-scrollbar-thumb {
+  border-radius: 3px;
+  background: #cfd8d7;
+}
+
+.quick-filters::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Med mus och gott om plats får filtren radbrytas så att alla val (även Taxor) syns direkt. */
+@media (hover: hover) and (min-width: 721px) {
+  .quick-filters {
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
 }
 
 .quick-filters button {

@@ -1,12 +1,17 @@
 {
-  "name": "react-vite-tailwind",
+  "name": "parkera-i-stockholm",
+  "description": "Interaktiv karta över parkering, taxeområden och avgifter i Stockholm.",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
     "refresh:data": "node scripts/refresh-parking-data.mjs"
   },
   "dependencies": {

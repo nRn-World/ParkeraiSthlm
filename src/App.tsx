@@ -49,6 +49,7 @@ import {
   STOCKHOLM_CENTER,
   TARIFFS,
   TAX_AREAS,
+  TAX_STREETS,
   type LatLng,
   type TariffId,
 } from "./data";
@@ -85,11 +86,15 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
+// Publika Overpass-instanser. Den kanoniska instansen först och en spegling som reserv.
+// Varje försök har en tidsgräns så att en långsam instans inte kan låsa gränssnittet.
 const OVERPASS_ENDPOINTS = [
-  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
   "https://overpass-api.de/api/interpreter",
+  "https://overpass.osm.ch/api/interpreter",
 ];
-const OVERPASS_ENDPOINT = OVERPASS_ENDPOINTS[0];
+const OVERPASS_TIMEOUT_MS = 15_000;
+const MAX_AREA_RADIUS_KM = 5;
+const MAX_VISIBLE_MARKERS = 600;
 const STOCKHOLM_DATA_BBOX = "59.15,17.70,59.50,18.35";
 const NON_PUBLIC_OSM_ACCESS = new Set(["private", "no", "permit", "employees"]);
 const PWA_INSTALL_DISMISSAL_KEY = "parksthlm-pwa-install-dismissed-v4";
@@ -97,6 +102,38 @@ const AREA_SEARCH_RADIUS_KM = 1.15;
 const FAVORITES_STORAGE_KEY = "parksthlm-favorites-v1";
 const PARKED_CAR_STORAGE_KEY = "parksthlm-parked-car-v1";
 const VEHICLE_PROFILE_STORAGE_KEY = "parksthlm-vehicle-profile-v1";
+const OFFLINE_MIN_ZOOM = 10;
+const OFFLINE_MAX_ZOOM = 16;
+// Tak för offline-nedladdningen: skyddar telefonens lagring och OpenStreetMaps tileservrar.
+const MAX_OFFLINE_TILES = 2500;
+// Genomsnittlig OSM-tile är ca 25 kB.
+const OFFLINE_TILE_KB = 25;
+
+function offlineTileSizeLabel(tileCount: number) {
+  return `${Math.max(1, Math.round((tileCount * OFFLINE_TILE_KB) / 1024))} MB`;
+}
+
+function collectOfflineTileUrls(bounds: ReturnType<LeafletMap["getBounds"]>) {
+  const urls: string[] = [];
+  for (let zoom = OFFLINE_MIN_ZOOM; zoom <= OFFLINE_MAX_ZOOM; zoom += 1) {
+    const tiles = 2 ** zoom;
+    const xMin = Math.max(0, Math.floor(((bounds.getWest() + 180) / 360) * tiles));
+    const xMax = Math.min(tiles - 1, Math.floor(((bounds.getEast() + 180) / 360) * tiles));
+    if (xMax < xMin) continue;
+    const latRad = (lat: number) => (lat * Math.PI) / 180;
+    const yMin = Math.max(0, Math.floor((1 - Math.log(Math.tan(latRad(bounds.getNorth())) + 1 / Math.cos(latRad(bounds.getNorth()))) / Math.PI) / 2 * tiles));
+    const yMax = Math.min(tiles - 1, Math.floor((1 - Math.log(Math.tan(latRad(bounds.getSouth())) + 1 / Math.cos(latRad(bounds.getSouth()))) / Math.PI) / 2 * tiles));
+    if (yMax < yMin) continue;
+    for (let x = xMin; x <= xMax; x += 1) {
+      for (let y = yMin; y <= yMax; y += 1) {
+        urls.push(`https://a.tile.openstreetmap.org/${zoom}/${x}/${y}.png`);
+        // Avbryt tidigt i stället för att bygga en orimligt stor lista.
+        if (urls.length > MAX_OFFLINE_TILES) return urls;
+      }
+    }
+  }
+  return urls;
+}
 
 const VEHICLE_PROFILES: Record<VehicleProfile, { label: string; filter: Category; description: string }> = {
   car: { label: "Bil", filter: "all", description: "Visar alla parkeringar" },
@@ -148,11 +185,18 @@ function placeTariffLabel(place: ParkingPlace) {
   return place.priceText;
 }
 
+// Etiketten beskriver i första hand vad platsen är. Ett garage med laddstolpar är
+// fortfarande ett garage – laddningen visas som ett tillägg i stället.
 function placeKindLabel(place: ParkingPlace) {
-  if ((place.evSpaces ?? 0) > 0) return "Laddplats";
-  if ((place.disabledSpaces ?? 0) > 0) return "Rörelsehindrade";
-  if ((place.mcSpaces ?? 0) > 0) return "MC-parkering";
-  if (place.kind === "garage") return "Parkeringsgarage";
+  const amenity = (place.evSpaces ?? 0) > 0
+    ? "Laddplats"
+    : (place.disabledSpaces ?? 0) > 0
+      ? "Rörelsehindrade"
+      : (place.mcSpaces ?? 0) > 0
+        ? "MC-parkering"
+        : null;
+  if (place.kind === "garage") return amenity ? `Parkeringsgarage · ${amenity}` : "Parkeringsgarage";
+  if (amenity) return amenity;
   if (place.kind === "surface") return "Markparkering";
   return "Gatuparkering";
 }
@@ -169,6 +213,22 @@ function parkingIcon(place: ParkingPlace, selected: boolean) {
     iconSize: selected ? [42, 48] : [34, 40],
     iconAnchor: selected ? [21, 46] : [17, 38],
   });
+}
+
+const GENERIC_PLACE_NAMES = new Set([
+  "parkering", "markparkering", "gatuparkering", "parkeringsgarage", "laddstation",
+  "mc-parkering", "parkering for rorelsehindrade", "parkering för rörelsehindrade",
+]);
+
+// Lägre siffra = viktigare markör. Används för att begränsa antalet markörer när
+// källorna bidrar med tusentals anonyma gatuparkeringsrader.
+function markerPriority(place: ParkingPlace) {
+  if (place.source === "local") return 0;
+  if (place.kind === "garage") return 1;
+  // Enskilda föreskriftsrader beskriver korta gatusnuttar och blir för många att visa
+  // i utzoomat läge – de är fullt synliga från zoom 14 och i alla aktiva filter.
+  if (place.source !== "stockholm-open-data" && !GENERIC_PLACE_NAMES.has(normalize(place.name)) && place.name.length > 3) return 2;
+  return 3;
 }
 
 function userIcon() {
@@ -604,6 +664,68 @@ function isWithinArea(place: ParkingPlace, scope: AreaScope) {
   return positions.some((position) => distanceKm(scope.center, position) <= scope.radiusKm) || distanceKm(scope.center, [place.lat, place.lng]) <= scope.radiusKm;
 }
 
+function pointInPolygon(point: LatLng, polygon: LatLng[]) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const [latCurrent, lngCurrent] = polygon[index];
+    const [latPrevious, lngPrevious] = polygon[previous];
+    const crossesRay = (lngCurrent > point[1]) !== (lngPrevious > point[1])
+      && point[0] < ((latPrevious - latCurrent) * (point[1] - lngCurrent)) / (lngPrevious - lngCurrent) + latCurrent;
+    if (crossesRay) inside = !inside;
+  }
+  return inside;
+}
+
+// Shoelace i lokala meter – används endast för att välja det mest specifika taxeområdet vid överlapp.
+function polygonAreaM2(polygon: LatLng[]) {
+  const metersPerDegree = 111_320;
+  const lngScale = Math.cos((STOCKHOLM_CENTER[0] * Math.PI) / 180) * metersPerDegree;
+  let total = 0;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const xPrevious = polygon[previous][1] * lngScale;
+    const yPrevious = polygon[previous][0] * metersPerDegree;
+    const xCurrent = polygon[index][1] * lngScale;
+    const yCurrent = polygon[index][0] * metersPerDegree;
+    total += xPrevious * yCurrent - xCurrent * yPrevious;
+  }
+  return Math.abs(total / 2);
+}
+
+function segmentDistanceKm(point: LatLng, start: LatLng, end: LatLng) {
+  const steps = Math.max(2, Math.min(80, Math.ceil(distanceKm(start, end) / 0.02)));
+  let nearest = Number.POSITIVE_INFINITY;
+  for (let step = 0; step <= steps; step += 1) {
+    const progress = step / steps;
+    const sample: LatLng = [
+      start[0] + (end[0] - start[0]) * progress,
+      start[1] + (end[1] - start[1]) * progress,
+    ];
+    nearest = Math.min(nearest, distanceKm(point, sample));
+  }
+  return nearest;
+}
+
+// Taxan för en valfri punkt: gatumarkeringar (0–60 m) väger tyngre än områdespolygonerna,
+// och vid överlappande områden väljs den minsta (mest specifika) polygonen.
+function tariffAtPosition(point: LatLng): { tariff: TariffId; street?: string } | null {
+  const streetMatch = TAX_STREETS.reduce<{ tariff: TariffId; name: string; distance: number } | null>((closest, segment) => {
+    let nearest = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < segment.positions.length - 1; index += 1) {
+      nearest = Math.min(nearest, segmentDistanceKm(point, segment.positions[index], segment.positions[index + 1]));
+    }
+    if (nearest > 0.06) return closest;
+    if (closest && closest.distance <= nearest) return closest;
+    return { tariff: segment.tariff, name: segment.name, distance: nearest };
+  }, null);
+  if (streetMatch) return { tariff: streetMatch.tariff, street: streetMatch.name };
+
+  const areaMatch = TAX_AREAS
+    .filter((area) => pointInPolygon(point, area.positions))
+    .map((area) => ({ tariff: area.tariff, area: polygonAreaM2(area.positions) }))
+    .sort((first, second) => first.area - second.area)[0];
+  return areaMatch ? { tariff: areaMatch.tariff } : null;
+}
+
 function officialProperty(properties: Record<string, unknown>, ...names: string[]): string | undefined {
   const matchingName = Object.keys(properties).find((key) =>
     names.some((name) => key.toLowerCase() === name.toLowerCase()),
@@ -669,15 +791,22 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
     const normalizedVehicle = normalize(vehicle ?? "");
     const isMotorcycle = rule === "pmotorcykel" || normalizedPlaceType.includes("motorcykel") || normalizedVehicle.includes("motorcykel");
     const isDisabled = rule === "prorelsehindrad" || normalizedPlaceType.includes("rorelsehindrad") || normalizedVehicle.includes("rorelsehindrad");
+    // Platser som är reserverade för särskilda fordon (beskickningsbilar, cyklar m.m.)
+    // får inte användas av allmänheten och ska därför inte visas som ledig parkering.
+    const isReservedForOthers = !isMotorcycle && !isDisabled
+      && (normalizedPlaceType.includes("reserverad") || normalizedPlaceType.includes("beskickning"));
+    if (isReservedForOthers) return [];
     const isFree = /^avgiftsfri\b/i.test(tariff ?? "");
     const tariffMatch = normalize(tariff ?? "").match(/\btaxa\s*([1-5])\b/);
     const tariffId = tariffMatch ? Number(tariffMatch[1]) as TariffId : null;
     const restrictionDetails = officialRuleDetails(properties);
     const otherInfo = restrictionDetails.join(" · ") || undefined;
     const identifier = String(feature.id ?? officialProperty(properties, "id", "objectid", "feature_object_id", "fid") ?? `${lat}-${lng}-${index}`);
+    // En del poster har en kod (t.ex. "7") i stället för en platsbeteckning – visa då gatunamnet.
+    const readableName = placeType && placeType.length >= 4 && !/^[\d\s-]+$/.test(placeType) ? placeType : streetName;
     return [{
       id: `stockholm-open-data-${rule}-${identifier}`,
-      name: isMotorcycle ? "MC-parkering" : isDisabled ? "Parkering för rörelsehindrade" : placeType || "Gatuparkering",
+      name: isMotorcycle ? "MC-parkering" : isDisabled ? "Parkering för rörelsehindrade" : readableName || "Gatuparkering",
       address: address || `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
       area: district ? `Stockholms stad · ${district}` : "Stockholms stad",
       lat,
@@ -703,12 +832,16 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
 async function fetchOverpass(query: string) {
   let lastError: Error | undefined;
   for (const endpoint of OVERPASS_ENDPOINTS) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), OVERPASS_TIMEOUT_MS);
     try {
-      const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`);
+      const response = await fetch(`${endpoint}?data=${encodeURIComponent(query)}`, { signal: controller.signal });
       if (!response.ok) throw new Error(`Overpass svarade ${response.status}`);
-      return response.json();
+      return await response.json();
     } catch (error) {
       lastError = error instanceof Error ? error : new Error("Overpass kunde inte nås");
+    } finally {
+      window.clearTimeout(timeout);
     }
   }
   throw lastError ?? new Error("Overpass kunde inte nås");
@@ -854,6 +987,7 @@ function dedupeDisplayParking(places: ParkingPlace[], category: Category) {
     if (place.kind === "garage" || category === "garage") {
       const baseName = normalize(place.name)
         .replace(/\b(p[- ]?hus|parkeringshus|parkeringsgarage|garage|parkering|entre|norr|soder|oster|vaster|norra|sodra|ostra|vastra)\b/g, " ")
+        .replace(/[^a-z0-9]+/g, " ")
         .replace(/\s+/g, " ")
         .trim();
       key = `garage:${baseName.length > 3 ? baseName : `${place.lat.toFixed(3)}:${place.lng.toFixed(3)}`}`;
@@ -877,20 +1011,72 @@ function dedupeDisplayParking(places: ParkingPlace[], category: Category) {
   return result;
 }
 
+// Flera källposter kan beskriva samma gatusnutt med identiskt namn och adress
+// (t.ex. två föreskriftsrader på samma gata). I listan visas de som en rad.
+function collapseIdenticalEntries(places: ParkingPlace[]) {
+  const result: ParkingPlace[] = [];
+  const seenIndexes = new Map<string, number>();
+
+  places.forEach((place) => {
+    const key = `${normalize(place.name)}|${normalize(place.address)}`;
+    const existingIndex = seenIndexes.get(key);
+    if (existingIndex == null) {
+      seenIndexes.set(key, result.length);
+      result.push(place);
+      return;
+    }
+    const existing = result[existingIndex];
+    if (distanceKm([existing.lat, existing.lng], [place.lat, place.lng]) > 0.06) {
+      result.push(place);
+      return;
+    }
+    result[existingIndex] = mergeDuplicateParking(existing, place);
+  });
+
+  return result;
+}
+
+const STREET_RULE_CELL_DEGREES = 0.002; // ca 220 m – större än sökradien nedan
+const STREET_RULE_MATCH_KM = 0.08;
+
+// Kopplar OSM-poster utan adress till närmaste gatu-föreskrift. Föreskrifterna läggs i ett
+// rutnät så att varje post bara jämförs med gatorna i sin närhet – annars blir det
+// hundra miljoner avståndsberäkningar när hela datasetet är laddat.
 function addNearbyStreetAddresses(places: ParkingPlace[]): ParkingPlace[] {
   const streetRules = places.filter((place) => place.source === "stockholm-open-data" && place.kind === "street" && !/^[-\d.]+,\s*[-\d.]+$/.test(place.address));
   if (streetRules.length === 0) return places;
 
+  const ruleCells = new Map<string, ParkingPlace[]>();
+  streetRules.forEach((rule) => {
+    const key = `${Math.floor(rule.lat / STREET_RULE_CELL_DEGREES)}:${Math.floor(rule.lng / STREET_RULE_CELL_DEGREES)}`;
+    const bucket = ruleCells.get(key);
+    if (bucket) bucket.push(rule);
+    else ruleCells.set(key, [rule]);
+  });
+
   let changed = false;
   const enriched = places.map((place) => {
     if (place.source !== "osm" || !/^[-\d.]+,\s*[-\d.]+$/.test(place.address)) return place;
-    const nearestStreet = streetRules.reduce<ParkingPlace | undefined>((closest, street) => {
-      if (!closest) return street;
-      return distanceKm([place.lat, place.lng], [street.lat, street.lng]) < distanceKm([place.lat, place.lng], [closest.lat, closest.lng])
-        ? street
-        : closest;
-    }, undefined);
-    if (!nearestStreet || distanceKm([place.lat, place.lng], [nearestStreet.lat, nearestStreet.lng]) > 0.08) return place;
+    const centreLat = Math.floor(place.lat / STREET_RULE_CELL_DEGREES);
+    const centreLng = Math.floor(place.lng / STREET_RULE_CELL_DEGREES);
+    let nearestStreet: ParkingPlace | undefined;
+    let nearestKm = Number.POSITIVE_INFINITY;
+
+    for (let latOffset = -1; latOffset <= 1; latOffset += 1) {
+      for (let lngOffset = -1; lngOffset <= 1; lngOffset += 1) {
+        const bucket = ruleCells.get(`${centreLat + latOffset}:${centreLng + lngOffset}`);
+        if (!bucket) continue;
+        bucket.forEach((rule) => {
+          const km = distanceKm([place.lat, place.lng], [rule.lat, rule.lng]);
+          if (km < nearestKm) {
+            nearestKm = km;
+            nearestStreet = rule;
+          }
+        });
+      }
+    }
+
+    if (!nearestStreet || nearestKm > STREET_RULE_MATCH_KM) return place;
     changed = true;
     return {
       ...place,
@@ -945,6 +1131,7 @@ function App() {
   const [routeLoading, setRouteLoading] = useState(false);
   const [offlineReady, setOfflineReady] = useState(localStorage.getItem("parksthlm-offline-ready") === "true");
   const [offlineDialogOpen, setOfflineDialogOpen] = useState(false);
+  const [offlineTiles, setOfflineTiles] = useState<string[]>([]);
   const [offlineProgress, setOfflineProgress] = useState<{ cached: number; total: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [canInstall, setCanInstall] = useState(false);
@@ -991,23 +1178,31 @@ function App() {
     } else {
       document.documentElement.classList.remove("dark");
     }
+    // Håll webbläsarens/telefonens färg överens med appens tema.
+    document.querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", darkMode ? "#0b1119" : "#1266ee");
   }, [darkMode]);
 
   // Skapa virtuell parkeringsplats för klickad koordinat för rutt/navigering
   const clickedPlace = useMemo<ParkingPlace | null>(() => {
     if (!clickedPosition) return null;
+    const tariffLookup = tariffAtPosition(clickedPosition);
     return {
       id: "clicked-pos",
       name: clickedAddress || "Vald kartposition",
       address: clickedAddress ? `${clickedPosition[0].toFixed(5)}, ${clickedPosition[1].toFixed(5)}` : "Position på kartan",
-      area: "Stockholm",
+      area: tariffLookup ? `Stockholm · Taxa ${tariffLookup.tariff}` : "Stockholm",
       lat: clickedPosition[0],
       lng: clickedPosition[1],
       kind: "street",
-      tariff: null,
+      tariff: tariffLookup?.tariff ?? null,
       free: false,
-      priceText: "Pris ej verifierat",
-      note: "Kartposition utan verifierad parkeringstaxa. Kontrollera alltid skyltar och betalningsapp på plats.",
+      priceText: tariffLookup ? getCurrentPrice(tariffLookup.tariff).label : "Pris ej verifierat",
+      note: tariffLookup
+        ? tariffLookup.street
+          ? `Taxa ${tariffLookup.tariff} enligt gatumarkeringen för ${tariffLookup.street}. Kontrollera alltid skylten på plats.`
+          : `Taxa ${tariffLookup.tariff} enligt Stockholms stads taxeområde för den här punkten. Kontrollera alltid skylten på plats.`
+        : "Punkten ligger utanför de karterade taxeområdena. Kontrollera alltid skyltar och betalningsapp på plats.",
       source: "local"
     };
   }, [clickedPosition, clickedAddress]);
@@ -1113,7 +1308,8 @@ function App() {
       if (cachedRaw) {
         try {
           const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-          if (cached.version === 3 && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+          // Versionen höjs när tolkningen av föreskrifterna ändras, så att gamla cachade poster rensas.
+          if (cached.version === 4 && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
             return cached.places;
           }
         } catch {
@@ -1131,7 +1327,7 @@ function App() {
           `${rule}.json`,
         );
         const places = parseOfficialRuleParking(payload, rule).filter((place) => isWithinArea(place, scope));
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 3, places }));
+        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: 4, places }));
         return places;
       } catch {
         return [];
@@ -1144,7 +1340,7 @@ function App() {
     const missingRules = rules.filter((rule) => !loadedGlobalRulesRef.current.has(rule));
     if (missingRules.length === 0) return rules.reduce((sum, rule) => sum + (globalRuleCountsRef.current.get(rule) ?? 0), 0);
     const results = await Promise.all(missingRules.map(async (rule) => {
-      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v3`;
+      const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v4`;
       const cachedRaw = localStorage.getItem(cacheKey);
       if (cachedRaw) {
         try {
@@ -1193,9 +1389,8 @@ function App() {
     }
     try {
       const q = `[out:json][timeout:120];nwr["amenity"="charging_station"](${STOCKHOLM_DATA_BBOX});out center tags;`;
-      const res = await fetch(OVERPASS_ENDPOINT + "?data=" + encodeURIComponent(q));
-      if (!res.ok) return;
-      const places = parseOsmParking(await res.json())
+      const payload = await fetchOverpass(q);
+      const places = parseOsmParking(payload)
         .filter((place) => (place.evSpaces ?? 0) > 0)
         .map((place): ParkingPlace => ({ ...place, source: "osm-ev" }));
       try {
@@ -1555,16 +1750,19 @@ function App() {
 
   const focusPosition = userPosition || searchPosition || viewCenter;
   const hasOfficialStreetData = allParking.some((place) => place.id.startsWith("stockholm-open-data-ptillaten-"));
+  // Adressberikningen görs i en memo i stället för i en effekt som skriver tillbaka till
+  // samma state – annars renderas hela trädet två gånger per datamängdsändring.
+  const displayParking = useMemo(() => addNearbyStreetAddresses(allParking), [allParking]);
   const filteredParking = useMemo(
     () => dedupeDisplayParking(
-      allParking.filter((place) =>
+      displayParking.filter((place) =>
         !(hasOfficialStreetData && place.source === "local" && place.kind === "street")
         && (!limitToArea || !areaScope || isWithinArea(place, areaScope))
         && matchesCategory(place),
       ),
       category,
     ),
-    [allParking, areaScope, category, hasOfficialStreetData, limitToArea, matchesCategory],
+    [areaScope, category, displayParking, hasOfficialStreetData, limitToArea, matchesCategory],
   );
   const selectedParkingTariff = selectedParking && isTariffId(selectedParking.tariff) ? selectedParking.tariff : null;
 
@@ -1636,15 +1834,14 @@ function App() {
     if (!map) return;
     const center = map.getCenter();
     const bounds = map.getBounds();
-    const radiusKm = distanceKm([center.lat, center.lng], [bounds.getNorth(), bounds.getEast()]);
-    if (radiusKm > 5) {
-      showNotice("Zooma in mer för att hämta exakt parkeringsdata i kartvyn.");
-      return;
-    }
+    // Kartvyn kan vara större än vad datakällorna klarar. Vi hämtar då den största
+    // tillåtna radien i stället för att neka – knappen ska alltid göra något.
+    const visibleRadiusKm = distanceKm([center.lat, center.lng], [bounds.getNorth(), bounds.getEast()]);
+    const clampedToMaxRadius = visibleRadiusKm > MAX_AREA_RADIUS_KM;
     const scope: AreaScope = {
       center: [center.lat, center.lng],
-      label: "aktuell kartvy",
-      radiusKm: Math.min(5, Math.max(AREA_SEARCH_RADIUS_KM, radiusKm)),
+      label: clampedToMaxRadius ? `kartans mitt (max ${MAX_AREA_RADIUS_KM} km)` : "aktuell kartvy",
+      radiusKm: Math.min(MAX_AREA_RADIUS_KM, Math.max(AREA_SEARCH_RADIUS_KM, visibleRadiusKm)),
     };
     setAreaScope(scope);
     setLimitToArea(true);
@@ -1662,7 +1859,9 @@ function App() {
         officialRules.length > 0 ? fetchOfficialRuleParking(officialRules, scope) : Promise.resolve(),
         category === "ev" ? Promise.all([fetchEvCharging(), fetchOcmCharging(), fetchNobilCharging()]) : Promise.resolve(),
       ]);
-      showNotice(`Visar ${categoryLabel(category).toLowerCase()} i aktuell kartvy`);
+      showNotice(clampedToMaxRadius
+        ? `Kartvyn täcker mer än ${MAX_AREA_RADIUS_KM} km. Visar ${categoryLabel(category).toLowerCase()} inom ${Math.round(scope.radiusKm)} km från mitten – zooma in för fler platser.`
+        : `Visar ${categoryLabel(category).toLowerCase()} i aktuell kartvy`);
     } catch {
       showNotice("All parkeringsdata i kartvyn kunde inte hämtas. Sparad data visas.");
     } finally {
@@ -1670,9 +1869,6 @@ function App() {
     }
   }, [category, fetchEvCharging, fetchNearbyOsmParking, fetchNobilCharging, fetchOcmCharging, fetchOfficialRuleParking, showNotice]);
 
-  useEffect(() => {
-    setAllParking((current) => addNearbyStreetAddresses(current));
-  }, [allParking]);
 
   useEffect(() => {
     if (category !== "mc") {
@@ -1698,7 +1894,7 @@ function App() {
       if (!needle) return true;
       return normalize(`${place.name} ${place.address} ${place.area} ${place.kind} ${place.tariff ? `taxa ${place.tariff}` : "gratis"}`).includes(needle);
     });
-    return places
+    return collapseIdenticalEntries(places)
       .map((place) => ({ place, distance: distanceKm(focusPosition, [place.lat, place.lng] as LatLng) }))
       .sort((a, b) => a.distance - b.distance);
   }, [filteredParking, focusPosition, query]);
@@ -1746,9 +1942,30 @@ function App() {
     const placesInView = visibleBounds
       ? filteredParking.filter((place) => visibleBounds.contains([place.lat, place.lng]))
       : filteredParking;
-    const markerPlaces = mapZoom < 12
-      ? placesInView.filter((place) => place.source === "local" || place.kind === "garage" || (place.disabledSpaces ?? 0) > 0 || (place.evSpaces ?? 0) > 0 || (place.mcSpaces ?? 0) > 0)
-      : placesInView;
+    // När kartan är utzoomad och inget filter är valt visas bara namngivna platser,
+    // garage och den lokala listan – annars dränks kartan av anonyma gatuparkeringsrader.
+    // Väljer användaren ett filter (t.ex. handikapp) visas alltid hela urvalet.
+    const showEverySource = mapZoom >= 14 || category !== "all";
+    let markerPlaces = showEverySource
+      ? placesInView
+      : placesInView.filter((place) => markerPriority(place) <= 2);
+    // Stora datamängder skulle ge tusentals DOM-markörer och hackig karta. När antalet
+    // överstiger taket behålls en markör per rutnät (ca 280 m) så att markörerna sprids
+    // jämnt över kartvyn i stället för att klumpa ihop sig – resten syns när man zoomar in.
+    if (markerPlaces.length > MAX_VISIBLE_MARKERS) {
+      const cellSize = 0.0025;
+      const usedCells = new Set<string>();
+      markerPlaces = [...markerPlaces]
+        .sort((first, second) => markerPriority(first) - markerPriority(second)
+          || distanceKm(viewCenter, [first.lat, first.lng]) - distanceKm(viewCenter, [second.lat, second.lng]))
+        .filter((place) => {
+          const cell = `${Math.floor(place.lat / cellSize)}:${Math.floor(place.lng / cellSize)}`;
+          if (usedCells.has(cell)) return false;
+          usedCells.add(cell);
+          return true;
+        })
+        .slice(0, MAX_VISIBLE_MARKERS);
+    }
     markerPlaces.forEach((place) => {
       L.marker([place.lat, place.lng], {
         pane: (place.evSpaces ?? 0) > 0 && (place.disabledSpaces ?? 0) === 0 && (place.mcSpaces ?? 0) === 0 ? "charging" : "parking",
@@ -1765,7 +1982,7 @@ function App() {
         })
         .addTo(layer);
     });
-  }, [filteredParking, mapZoom, selectedParking, viewCenter]);
+  }, [category, filteredParking, mapZoom, selectedParking, viewCenter]);
 
   const selectCategory = (next: Category, fit = false) => {
     setCategory(next);
@@ -2138,6 +2355,8 @@ function App() {
       deferredPromptRef.current = null;
       setCanInstall(false);
     } else {
+      const map = mapRef.current;
+      setOfflineTiles(map ? collectOfflineTileUrls(map.getBounds()) : []);
       setOfflineDialogOpen(true);
     }
   };
@@ -2145,26 +2364,12 @@ function App() {
   const startOfflineDownload = async () => {
     if (offlineProgress) return;  // Already downloading
     setOfflineDialogOpen(false);
-    const map = mapRef.current;
-    if (!map) return;
-    const bounds = map.getBounds();
-    const urls: string[] = [];
-    for (let z = 10; z <= 16; z++) {
-      const n = Math.pow(2, z);
-      const xMin = Math.max(0, Math.floor(((bounds.getWest() + 180) / 360) * n));
-      const xMax = Math.min(n - 1, Math.floor(((bounds.getEast() + 180) / 360) * n));
-      if (xMax < xMin) continue;
-      const latRad = (lat: number) => (lat * Math.PI) / 180;
-      const yMin = Math.max(0, Math.floor((1 - Math.log(Math.tan(latRad(bounds.getNorth())) + 1 / Math.cos(latRad(bounds.getNorth()))) / Math.PI) / 2 * n));
-      const yMax = Math.min(n - 1, Math.floor((1 - Math.log(Math.tan(latRad(bounds.getSouth())) + 1 / Math.cos(latRad(bounds.getSouth()))) / Math.PI) / 2 * n));
-      if (yMax < yMin) continue;
-      for (let x = xMin; x <= xMax; x++) {
-        for (let y = yMin; y <= yMax; y++) {
-          urls.push(`https://a.tile.openstreetmap.org/${z}/${x}/${y}.png`);
-        }
-      }
-    }
+    const urls = offlineTiles;
     if (!urls.length) { showNotice("Kunde inte beräkna kartrutor."); return; }
+    if (urls.length > MAX_OFFLINE_TILES) {
+      showNotice(`Området är för stort för offline-nedladdning. Zooma in och försök igen (max ${MAX_OFFLINE_TILES} rutor).`);
+      return;
+    }
     setOfflineProgress({ cached: 0, total: urls.length });
     try {
       const registration = await navigator.serviceWorker!.ready;
@@ -2303,6 +2508,43 @@ function App() {
     setVehicleProfileOpen(false);
     showNotice(`${VEHICLE_PROFILES[vehicleProfileDraft].label} sparad – relevant filter är aktivt`);
   };
+
+  // Escape stänger det översta öppna lagret (modal, kort eller körläge) i den ordning
+  // användaren förväntar sig – samma sak som att trycka på stäng-knappen.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (offlineDialogOpen) setOfflineDialogOpen(false);
+      else if (pwaInstallOpen) dismissPwaInstall();
+      else if (vehicleProfileOpen) setVehicleProfileOpen(false);
+      else if (parkedCarOpen) setParkedCarOpen(false);
+      else if (favoritesOpen) setFavoritesOpen(false);
+      else if (infoOpen) setInfoOpen(false);
+      else if (selectedParking) setSelectedParking(null);
+      else if (clickedPosition) setClickedPosition(null);
+      else if (selectedZone) setSelectedZone(null);
+      else if (routeInfo) clearRoute();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [clickedPosition, dismissPwaInstall, favoritesOpen, infoOpen, offlineDialogOpen, parkedCarOpen, pwaInstallOpen, routeInfo, selectedParking, selectedZone, vehicleProfileOpen]);
+
+  // Flytta in fokus i dialogen när den öppnas och tillbaka till knappen som öppnade den.
+  const anyDialogOpen = favoritesOpen || parkedCarOpen || vehicleProfileOpen || infoOpen || offlineDialogOpen || pwaInstallOpen;
+  useEffect(() => {
+    if (!anyDialogOpen) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => {
+      const dialogs = document.querySelectorAll<HTMLElement>('[role="dialog"]');
+      const dialog = dialogs[dialogs.length - 1];
+      const target = dialog?.querySelector<HTMLElement>('button, [href], input, [tabindex]:not([tabindex="-1"])');
+      (target ?? dialog)?.focus();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      previousFocus?.focus();
+    };
+  }, [anyDialogOpen]);
 
   const visibleResults = searchMatches.slice(0, query ? 30 : 20);
 
@@ -2658,7 +2900,7 @@ function App() {
                 )}
                 <p>{clickedPlace.address}</p>
                 <span className="place-tariff" style={{ background: placeColor(clickedPlace) }}>
-                  Pris ej verifierat
+                  {clickedPlace.tariff ? placeTariffLabel(clickedPlace) : "Taxa ej karterad"}
                 </span>
               </div>
             </div>
@@ -2666,12 +2908,12 @@ function App() {
               <div className="place-fact">
                 <small>Pris just nu</small>
                 <strong>
-                  {clickedPlace.priceText}
+                  {clickedPlace.tariff ? getCurrentPrice(clickedPlace.tariff).label : clickedPlace.priceText}
                 </strong>
               </div>
               <div className="place-fact">
                 <small>Områdestaxa</small>
-                <strong>Se skyltning</strong>
+                <strong>{clickedPlace.tariff ? `Taxa ${clickedPlace.tariff}` : "Se skyltning"}</strong>
               </div>
               <div className="place-fact">
                 <small>Avstånd</small>
@@ -2723,7 +2965,7 @@ function App() {
       <AnimatePresence>
         {favoritesOpen && (
           <motion.div className="modal-backdrop feature-modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setFavoritesOpen(false)}>
-            <motion.section className="info-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="favorites-title" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
+            <motion.section className="info-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="favorites-title" tabIndex={-1} initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
               <button className="sheet-close" type="button" onClick={() => setFavoritesOpen(false)} aria-label="Stäng"><X size={19} /></button>
               <span className="info-icon favorite-icon"><Heart size={23} fill="currentColor" /></span>
               <h2 id="favorites-title">Favoritparkeringar</h2>
@@ -2752,7 +2994,7 @@ function App() {
       <AnimatePresence>
         {parkedCarOpen && (
           <motion.div className="modal-backdrop feature-modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setParkedCarOpen(false)}>
-            <motion.section className="info-modal feature-modal parked-car-modal" role="dialog" aria-modal="true" aria-labelledby="parked-car-title" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
+            <motion.section className="info-modal feature-modal parked-car-modal" role="dialog" aria-modal="true" aria-labelledby="parked-car-title" tabIndex={-1} initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
               <button className="sheet-close" type="button" onClick={() => setParkedCarOpen(false)} aria-label="Stäng"><X size={19} /></button>
               <span className="info-icon parked-car-icon"><CarFront size={24} /></span>
               <h2 id="parked-car-title">Var parkerade jag?</h2>
@@ -2793,7 +3035,7 @@ function App() {
       <AnimatePresence>
         {vehicleProfileOpen && (
           <motion.div className="modal-backdrop feature-modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setVehicleProfileOpen(false)}>
-            <motion.section className="info-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-profile-title" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
+            <motion.section className="info-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="vehicle-profile-title" tabIndex={-1} initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
               <button className="sheet-close" type="button" onClick={() => setVehicleProfileOpen(false)} aria-label="Stäng"><X size={19} /></button>
               <span className="info-icon"><Settings2 size={24} /></span>
               <h2 id="vehicle-profile-title">Fordonsprofil</h2>
@@ -2818,10 +3060,10 @@ function App() {
       <AnimatePresence>
         {infoOpen && (
           <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setInfoOpen(false)}>
-            <motion.section className="info-modal" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
+            <motion.section className="info-modal" role="dialog" aria-modal="true" aria-labelledby="info-title" tabIndex={-1} initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
               <button className="sheet-close" type="button" onClick={() => setInfoOpen(false)} aria-label="Stäng"><X size={19} /></button>
               <span className="info-icon"><Info size={24} /></span>
-              <h2>Parkera smartare i Stockholm</h2>
+              <h2 id="info-title">Parkera smartare i Stockholm</h2>
               <p>Kartan visar Stockholms fem ordinarie taxeområden, gatuparkering, garage, markparkering och platser som är markerade som gratis.</p>
               <div className="info-list">
                 <div><strong>Taxedata</strong><span>Prisnivåer och tider baseras på Stockholms stads publicerade taxor. Helgdagar och lokala avvikelser kan förekomma.</span></div>
@@ -2841,13 +3083,16 @@ function App() {
 
       {offlineDialogOpen && (
         <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setOfflineDialogOpen(false)}>
-          <motion.section className="info-modal" initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(e) => e.stopPropagation()}>
+          <motion.section className="info-modal" role="dialog" aria-modal="true" aria-labelledby="offline-dialog-title" tabIndex={-1} initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(e) => e.stopPropagation()}>
             <button className="sheet-close" type="button" onClick={() => setOfflineDialogOpen(false)} aria-label="Stäng"><X size={19} /></button>
             <span className="info-icon"><Download size={24} /></span>
-            <h2>Ladda ner offline-karta?</h2>
-            <p>Kartrutor för det aktuella området (zoom 10–16) laddas ner och sparas i telefonen. Efter nedladdning fungerar kartan, GPS:en och parkeringsdatan utan internet (även i flygplansläge).<br /><br /><strong>Uppskattad storlek:</strong> ~2–10 MB beroende på kartvy.<br /><strong>Adressökning och vägrutt</strong> kräver fortfarande internet.</p>
+            <h2 id="offline-dialog-title">Ladda ner offline-karta?</h2>
+            <p>Kartrutor för det aktuella området (zoom {OFFLINE_MIN_ZOOM}–{OFFLINE_MAX_ZOOM}) laddas ner och sparas i telefonen. Efter nedladdning fungerar kartan, GPS:en och parkeringsdatan utan internet (även i flygplansläge).<br /><br /><strong>{offlineTiles.length} kartrutor</strong> · <strong>ca {offlineTileSizeLabel(offlineTiles.length)}</strong><br /><strong>Adressökning och vägrutt</strong> kräver fortfarande internet.</p>
+            {offlineTiles.length > MAX_OFFLINE_TILES ? (
+              <div className="warning-box"><CircleAlert size={18} /><span><strong>Området är för stort.</strong> Zooma in kartan och öppna rutan igen – max {MAX_OFFLINE_TILES} rutor per nedladdning.</span></div>
+            ) : null}
             <div className="modal-actions">
-              <button type="button" className="modal-action" onClick={startOfflineDownload}><Download size={17} /> Starta nedladdning</button>
+              <button type="button" className="modal-action" onClick={startOfflineDownload} disabled={!offlineTiles.length || offlineTiles.length > MAX_OFFLINE_TILES}><Download size={17} /> Starta nedladdning</button>
               <button type="button" onClick={() => setOfflineDialogOpen(false)}>Avbryt</button>
             </div>
           </motion.section>
