@@ -49,11 +49,12 @@ Appen visar Stockholms stads officiella fem taxeområden (Taxa 1–5) med korrek
 - Snabbfilter: Garage, Gatuparkering, Gratis, Taxa 1–5
 - Listan kan sorteras på **närmast**, **billigast** eller **gratis nu**, och "Visa fler" fortsätter bortom de första 20 träffarna
 - Rubriken i listan är gatunamnet; föreskriftstypen (t.ex. "P-avgift endast besök") visas som etikett
+- Föreskriftstaxor utanför taxa 1–5 visas som **belopp** i listan, och hela skrivningen samlas i ett eget kort i platskortet
 
 ### 🚗 Min parkerade bil
 - Spara var bilen står (GPS, vald parkering eller valfri kartpunkt) med plats och anteckning
 - Taxan på platsen sparas vid tillfället: kortet visar **pris nu**, när avgiften ändras och en nedräkning till dess
-- Valfri påminnelse som varnar 15 minuter innan gratisperioden tar slut eller avgiften börjar (notis i appen, och systemnotis där webbläsaren tillåter)
+- Valfri påminnelse som varnar 15 minuter innan gratisperioden tar slut eller avgiften börjar (notis i appen, och systemnotis där webbläsaren tillåter). Den erbjuds bara på taxor där avgiftsläget faktiskt skiftar
 
 ### 📡 Live-parkeringsdata
 - Hämtar parkeringsplatser från **OpenStreetMap Overpass API** inom 7 km från Stockholms centrum
