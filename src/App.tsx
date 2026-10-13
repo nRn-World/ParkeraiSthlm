@@ -267,6 +267,23 @@ function nextPriceChange(tariff: TariffId, from: Date) {
   return null;
 }
 
+// Nästa gång avgiftsläget skiftar mellan gratis och avgift. Det är de skiftena som
+// betyder något för en parkerad bil – att priset går från 20 till 31 kr/tim är ingen
+// anledning att flytta den. Söker åtta dagar framåt så att helgdygn hinns med.
+function nextFreeBoundary(tariff: TariffId, from: Date): { at: Date; amount: number; freeBefore: boolean } | null {
+  const stepMs = 5 * 60 * 1000;
+  const end = from.getTime() + 8 * 24 * 60 * 60 * 1000;
+  let previous = getCurrentPrice(tariff, from).amount;
+  for (let time = Math.floor(from.getTime() / stepMs) * stepMs + stepMs; time <= end; time += stepMs) {
+    const moment = new Date(time);
+    const amount = getCurrentPrice(tariff, moment).amount;
+    if (amount === previous) continue;
+    if (amount === 0 || previous === 0) return { at: moment, amount, freeBefore: previous === 0 };
+    previous = amount;
+  }
+  return null;
+}
+
 // Gratis just nu = uttryckligen avgiftsfri, eller en taxa som kostar 0 kr vid den här tiden.
 function isFreeNow(place: ParkingPlace, priceByTariff: Map<TariffId, number>) {
   if (place.free) return true;
@@ -1286,6 +1303,11 @@ function App() {
     () => (parkedCarTariff ? nextPriceChange(parkedCarTariff, parkedCarMoment) : null),
     [parkedCarMoment, parkedCarTariff],
   );
+  // Bara taxor med en gratisperiod har något att påminna om.
+  const parkedCarFreeBoundary = useMemo(
+    () => (parkedCarTariff ? nextFreeBoundary(parkedCarTariff, parkedCarMoment) : null),
+    [parkedCarMoment, parkedCarTariff],
+  );
   const parkedCarStatus = useMemo(() => {
     if (!parkedCar) return null;
     if (!parkedCarPrice) return "Taxan är inte karterad här – kontrollera skyltningen på gatan.";
@@ -1343,17 +1365,15 @@ function App() {
   useEffect(() => {
     if (!parkedCar?.reminder || !parkedCarTariff) return;
     const now = new Date(clock);
-    const change = nextPriceChange(parkedCarTariff, now);
-    if (!change) return;
-    const price = getCurrentPrice(parkedCarTariff, now);
-    if (change.amount !== 0 && price.amount !== 0) return;
-    const minutesLeft = (change.at.getTime() - now.getTime()) / 60_000;
+    const boundary = nextFreeBoundary(parkedCarTariff, now);
+    if (!boundary) return;
+    const minutesLeft = (boundary.at.getTime() - now.getTime()) / 60_000;
     if (minutesLeft > PARKING_REMINDER_LEAD_MINUTES || minutesLeft < 0) return;
-    if (parkingReminderFiredRef.current === change.at.getTime()) return;
-    parkingReminderFiredRef.current = change.at.getTime();
-    const message = change.amount === 0
-      ? `Gratis parkering från ${formatClock(change.at)}.`
-      : `Avgiften börjar ${formatClock(change.at)} med ${change.amount} kr/tim – flytta bilen eller betala.`;
+    if (parkingReminderFiredRef.current === boundary.at.getTime()) return;
+    parkingReminderFiredRef.current = boundary.at.getTime();
+    const message = boundary.amount === 0
+      ? `Gratis parkering från ${formatClock(boundary.at)}.`
+      : `Avgiften börjar ${formatClock(boundary.at)} med ${boundary.amount} kr/tim – flytta bilen eller betala.`;
     showNotice(message);
     try {
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
@@ -3262,7 +3282,7 @@ function App() {
                     <span className="car-price-next">{parkedCarStatus}</span>
                     {parkedCar.tariffLabel && <small>{parkedCar.tariffLabel}</small>}
                   </div>
-                  {parkedCarTariff ? (
+                  {parkedCarFreeBoundary ? (
                     <button type="button" className={`reminder-toggle ${parkedCar.reminder ? "is-on" : ""}`} aria-pressed={parkedCar.reminder} onClick={toggleParkingReminder}>
                       {parkedCar.reminder ? <BellRing size={17} /> : <Bell size={17} />}
                       <span>
