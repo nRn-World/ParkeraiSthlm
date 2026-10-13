@@ -566,15 +566,20 @@ a:focus-visible {
 
 .result-copy > span {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 6px;
   margin-top: 6px;
 }
 
 .result-copy b {
+  min-width: 0;
+  overflow: hidden;
   color: #22599f;
   font-size: 9.5px;
   font-weight: 820;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .result-copy b.free {
@@ -582,12 +587,14 @@ a:focus-visible {
 }
 
 .result-copy i {
+  flex: 0 0 auto;
   padding-left: 6px;
   border-left: 1px solid #dce3e2;
   color: #77858e;
   font-size: 9px;
   font-style: normal;
   font-weight: 590;
+  white-space: nowrap;
 }
 
 .result-distance {
@@ -1229,6 +1236,43 @@ a:focus-visible {
 .place-note svg {
   flex: 0 0 auto;
   color: #e18c3c;
+}
+
+.rate-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 11px;
+  padding: 10px 11px;
+  border: 1px solid #cddcec;
+  border-radius: 11px;
+  color: #2b5c96;
+  background: #f5f9ff;
+}
+
+.rate-card > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.rate-card > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rate-card small {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.rate-card strong {
+  color: #1d3f68;
+  font-size: 10.5px;
+  font-weight: 640;
+  line-height: 1.45;
 }
 
 .service-day-card {
@@ -2892,6 +2936,16 @@ a:focus-visible {
 
 .dark .place-note {
   color: #94a3b8;
+}
+
+.dark .rate-card {
+  border-color: #2f4d78;
+  color: #93c5fd;
+  background: #16263c;
+}
+
+.dark .rate-card strong {
+  color: #dbeafe;
 }
 
 .dark .service-day-card {

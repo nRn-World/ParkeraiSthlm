@@ -199,10 +199,22 @@ function placeColor(place: ParkingPlace) {
   return isTariffId(place.tariff) ? TARIFFS[place.tariff].color : "#172536";
 }
 
+// Föreskrivna taxor beskrivs ibland med en hel mening i källan, t.ex.
+// "Taxa enligt Stockholms stad: taxa 11: Vardagar utom vardag före sön- och helgdag … 13,75 kr/tim."
+// I en listrad behövs bara beloppet, så det första kr/tim-priset plockas ut. Hela föreskriften
+// står kvar oförkortad i platskortet.
+const PRICE_IN_TEXT = /(\d{1,3}(?:[.,]\d{1,2})?)\s*kr\s*\/\s*tim/i;
+
+function compactPriceText(text: string) {
+  const price = PRICE_IN_TEXT.exec(text);
+  if (price) return `${price[1]} kr/tim`;
+  return text.length > 40 ? "Taxa enligt föreskrift" : text;
+}
+
 function placeTariffLabel(place: ParkingPlace) {
   if (place.free) return "Avgiftsfri";
   if (isTariffId(place.tariff)) return `Taxa ${place.tariff}`;
-  return place.priceText;
+  return compactPriceText(place.priceText);
 }
 
 // Etiketten beskriver i första hand vad platsen är. Ett garage med laddstolpar är
@@ -232,10 +244,9 @@ function placeListCopy(place: ParkingPlace) {
     return {
       heading: street,
       detail: place.typeLabel ?? (isOfficialRule ? place.area : `${place.address} · ${place.area}`),
-      isStreetHeading: true,
     };
   }
-  return { heading: place.name, detail: `${place.address} · ${place.area}`, isStreetHeading: false };
+  return { heading: place.name, detail: `${place.address} · ${place.area}` };
 }
 
 function formatClock(date: Date) {
@@ -1938,6 +1949,13 @@ function App() {
   );
   const selectedParkingTariff = selectedParking && isTariffId(selectedParking.tariff) ? selectedParking.tariff : null;
   const selectedParkingCopy = selectedParking ? placeListCopy(selectedParking) : null;
+  // Föreskrivna taxor utanför appens taxa 1–5 (taxa 11–14 m.m.) beskrivs med en hel
+  // mening i källan. Beloppet får plats i faktarutan, men hela skrivningen behöver en
+  // egen rad – annars blir "Pris" en textvägg i en smal kolumn.
+  const selectedParkingOfficialRate = selectedParking && !selectedParking.free && !selectedParkingTariff
+    && selectedParking.priceText.length > 40
+    ? selectedParking.priceText
+    : null;
 
   const loadParkingAround = useCallback(async (nextCategory: Category = category, requestedScope?: AreaScope) => {
     if (!online) {
@@ -3093,7 +3111,7 @@ function App() {
               </div>
             </div>
             <div className="place-facts">
-              <div className="place-fact"><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParkingTariff ? getCurrentPrice(selectedParkingTariff).label : selectedParking.priceText}</strong></div>
+              <div className="place-fact"><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParkingTariff ? getCurrentPrice(selectedParkingTariff).label : compactPriceText(selectedParking.priceText)}</strong></div>
               <div className="place-fact"><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div className="place-fact"><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
               {(selectedParking.disabledSpaces ?? 0) > 0 ? <div className="place-fact"><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
@@ -3115,6 +3133,15 @@ function App() {
                 </div>
               ) : null}
             </div>
+            {selectedParkingOfficialRate ? (
+              <div className="rate-card">
+                <CircleAlert size={17} />
+                <div>
+                  <small>Avgift enligt föreskrift</small>
+                  <strong>{selectedParkingOfficialRate}</strong>
+                </div>
+              </div>
+            ) : null}
             {selectedParking.serviceText ? (
               <div className="service-day-card">
                 <Clock3 size={18} />
