@@ -258,6 +258,37 @@ npm run ios:open      # öppnar projektet i Xcode (kräver macOS)
 
 ---
 
+## 🤖 Android-app (Google Play)
+
+Samma app finns även som Android-app. Gradle-projektet ligger i `android/` och byggs med
+Capacitor 8 mot API 36, vilket är nivån Google Play kräver från och med 31 augusti 2026.
+
+```bash
+npm ci
+npm run android:sync    # ikoner + webbappbygge + synk in i android/
+cd android && ./gradlew bundleRelease
+```
+
+Den signerade appbunten hamnar i `android/app/build/outputs/bundle/release/app-release.aab`.
+Android Gradle Plugin vill ha JDK 21, så kör bygget med Android Studios egen Java om din
+`java -version` är nyare:
+
+```bash
+export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
+```
+
+- **Uppladdningsnyckeln** skapas med `node scripts/make-upload-keystore.mjs` och ligger i
+  `~/.parkeraisthlm/` tillsammans med en git-ignorerad `android/keystore.properties`.
+- **Bygga utan Android Studio:** [.github/workflows/android.yml](./.github/workflows/android.yml)
+  bygger appbunten i molnet. Se [docs/GOOGLE_PLAY.md](./docs/GOOGLE_PLAY.md).
+- **Butikstext, bilder och datasäkerhetssvar:**
+  [docs/google-play-text.md](./docs/google-play-text.md).
+- I den inbyggda appen stänger systemknappen Tillbaka det översta lagret i stället för att
+  lämna appen, och offline-kartans rutor sparas i IndexedDB eftersom service workers inte
+  finns där.
+
+---
+
 ## 🤝 Bidra till projektet
 
 Bidrag är välkomna! Om du hittar felaktig taxeinformation, vill lägga till parkeringsplatser eller förbättra UX:

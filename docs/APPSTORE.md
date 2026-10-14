@@ -19,7 +19,7 @@ Texten som ska klistras in i App Store Connect ligger i [appstore-text.md](appst
 | iOS-projekt (Xcode, Swift Package Manager) | `ios/App` | Genererat med Capacitor 8.5.3, öppnas med `npm run ios:open` |
 | Appens ID och namn | `ios/App/App.xcodeproj` + `capacitor.config.ts` | `one.nrnworld.parkeraisthlm`, namnet `ParkeraiSthlm` |
 | Ikon 1024×1024 utan genomskinlighet | `public/icon-1024.png` → `ios/App/App/Assets.xcassets/AppIcon.appiconset` | App Store kräver ogenomskinlig 1024-ikon |
-| Startbild, ljust och mörkt tema | `ios/App/App/Assets.xcassets/Splash.imageset` | Genereras av `npm run ios:assets` |
+| Startbild, ljust och mörkt tema | `ios/App/App/Assets.xcassets/Splash.imageset` | Genereras av `npm run assets:native` |
 | Platsbehörighetens förklaringstext | `ios/App/App/Info.plist` | Utan den visas ingen behörighetsruta i iOS |
 | Språk: svenska som huvudspår | `ios/App/App/Info.plist` | `CFBundleDevelopmentRegion = sv`, lokalerna `sv` och `en` |
 | Exportefterlevnad | `ios/App/App/Info.plist` | `ITSAppUsesNonExemptEncryption = false` (bara systemets egen kryptering används) |
@@ -28,13 +28,13 @@ Texten som ska klistras in i App Store Connect ligger i [appstore-text.md](appst
 | Publik integritetspolicy | `public/privacy.html` | `https://nrnworld.one/ParkeraiSthlm/privacy.html` |
 | Publik supportsida med kontakt | `public/support.html` | `https://nrnworld.one/ParkeraiSthlm/support.html` |
 | Molnbygge | `codemagic.yaml` | Bygger och skickar till TestFlight utan Mac |
-| Byggskript | `package.json` | `ios:assets`, `build:native`, `ios:sync` |
+| Byggskript | `package.json` | `assets:native`, `build:native`, `ios:sync` |
 
 Så hänger byggstegen ihop:
 
 ```bash
 npm ci                 # beroenden enligt package-lock.json
-npm run ios:assets     # ikon + iOS-ikoner och startbilder
+npm run assets:native  # ikon + iOS-ikoner och startbilder
 npm run build:native   # webbappen byggd för att ligga i appen (utan GitHub Pages-prefixet)
 npx cap sync ios       # kopierar bygget in i ios/App/App/public och uppdaterar pluginlistan
 ```

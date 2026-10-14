@@ -42,7 +42,7 @@ workflows:
         script: npm ci
 
       - name: Ikoner och startbilder
-        script: npm run ios:assets
+        script: npm run assets:native
 
       - name: Bygg webbappen för den inbyggda appen
         script: npm run build:native

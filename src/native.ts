@@ -222,6 +222,30 @@ export async function initNativeShell(): Promise<void> {
 }
 
 /**
+ * Android har en systemknapp för Tillbaka som iOS saknar. Utan den här kopplingen
+ * lämnar knappen appen direkt i stället för att stänga det som är öppet.
+ *
+ * `closeTopLayer` ska returnera true om något stängdes. Stängdes inget minimeras appen,
+ * så att kartan och det du skrivit in finns kvar när du kommer tillbaka.
+ *
+ * Returnerar en funktion som tar bort lyssnaren. På iOS och webben händer ingenting.
+ */
+export async function registerAndroidBackButton(closeTopLayer: () => boolean): Promise<() => void> {
+  if (nativePlatform() !== "android") return () => undefined;
+  try {
+    const { App } = await import("@capacitor/app");
+    const handle = await App.addListener("backButton", () => {
+      if (closeTopLayer()) return;
+      void App.minimizeApp();
+    });
+    return () => void handle.remove();
+  } catch {
+    // Går lyssnaren inte att koppla in beter sig appen som förut.
+    return () => undefined;
+  }
+}
+
+/**
  * Statusraden ligger ovanpå appens egen yta (kartan och den blå listen), och ska därför
  * ha ljus text i både ljust och mörkt tema – samma beteende som webbappen har i
  * standalone-läge. Färgen på själva listen sätts inte, eftersom den ligger bakom appens yta.

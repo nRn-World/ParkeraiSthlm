@@ -14,12 +14,15 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "assets:app": "node scripts/make-app-assets.mjs",
-    "ios:assets": "node scripts/ios-assets.mjs",
-    "ios:sync": "npm run ios:assets && npm run build:native && cap sync ios",
+    "assets:native": "node scripts/native-assets.mjs",
+    "ios:sync": "npm run assets:native && npm run build:native && cap sync ios",
     "ios:open": "cap open ios",
+    "android:sync": "npm run assets:native && npm run build:native && cap sync android",
+    "android:open": "cap open android",
     "refresh:data": "node scripts/refresh-parking-data.mjs"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.3",
     "@capacitor/app": "^8.1.2",
     "@capacitor/browser": "^8.0.5",
     "@capacitor/core": "^8.5.3",

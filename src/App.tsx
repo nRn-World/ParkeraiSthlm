@@ -11,6 +11,7 @@ import {
   initNativeShell,
   isNativeApp,
   openExternalUrl as openNativeUrl,
+  registerAndroidBackButton,
   requestNotificationPermission,
   setNativeStatusBar,
   showNotification,
@@ -3695,25 +3696,60 @@ function App() {
     showNotice(`${VEHICLE_PROFILES[vehicleProfileDraft].label} sparad${reg ? ` · ${reg}` : ""} – relevant filter är aktivt`);
   };
 
-  // Escape stänger det översta öppna lagret (modal, kort eller körläge) i den ordning
-  // användaren förväntar sig – samma sak som att trycka på stäng-knappen.
+  // Stänger det översta öppna lagret (modal, kort eller körläge) i den ordning användaren
+  // förväntar sig – samma sak som att trycka på stäng-knappen. Returnerar true om något
+  // faktiskt stängdes, vilket Android-knappen Tillbaka behöver veta.
+  const closeTopLayer = useCallback(() => {
+    if (offlineDialogOpen) { setOfflineDialogOpen(false); return true; }
+    if (pwaInstallOpen) { dismissPwaInstall(); return true; }
+    if (vehicleProfileOpen) { setVehicleProfileOpen(false); return true; }
+    if (parkedCarOpen) { setParkedCarOpen(false); return true; }
+    if (favoritesOpen) { setFavoritesOpen(false); return true; }
+    if (infoOpen) { setInfoOpen(false); return true; }
+    if (selectedParking) { setSelectedParking(null); return true; }
+    if (clickedPosition) { setClickedPosition(null); return true; }
+    if (selectedZone) { setSelectedZone(null); return true; }
+    if (routeInfo) { clearRoute(); return true; }
+    return false;
+  }, [
+    clearRoute,
+    clickedPosition,
+    dismissPwaInstall,
+    favoritesOpen,
+    infoOpen,
+    offlineDialogOpen,
+    parkedCarOpen,
+    pwaInstallOpen,
+    routeInfo,
+    selectedParking,
+    selectedZone,
+    vehicleProfileOpen,
+  ]);
+
+  // Android har en systemknapp för Tillbaka i stället för Escape. Den stänger samma lager;
+  // är inget öppet minimeras appen så att kartan finns kvar när du kommer tillbaka.
+  useEffect(() => {
+    let cleanup: (() => void) | null = null;
+    let cancelled = false;
+    void registerAndroidBackButton(closeTopLayer).then((remove) => {
+      if (cancelled) remove();
+      else cleanup = remove;
+    });
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, [closeTopLayer]);
+
+  // Escape stänger det översta öppna lagret – samma funktion som Android-knappen använder.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      if (offlineDialogOpen) setOfflineDialogOpen(false);
-      else if (pwaInstallOpen) dismissPwaInstall();
-      else if (vehicleProfileOpen) setVehicleProfileOpen(false);
-      else if (parkedCarOpen) setParkedCarOpen(false);
-      else if (favoritesOpen) setFavoritesOpen(false);
-      else if (infoOpen) setInfoOpen(false);
-      else if (selectedParking) setSelectedParking(null);
-      else if (clickedPosition) setClickedPosition(null);
-      else if (selectedZone) setSelectedZone(null);
-      else if (routeInfo) clearRoute();
+      closeTopLayer();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [clickedPosition, dismissPwaInstall, favoritesOpen, infoOpen, offlineDialogOpen, parkedCarOpen, pwaInstallOpen, routeInfo, selectedParking, selectedZone, vehicleProfileOpen]);
+  }, [closeTopLayer]);
 
   // Flytta in fokus i dialogen när den öppnas och tillbaka till knappen som öppnade den.
   const anyDialogOpen = favoritesOpen || parkedCarOpen || vehicleProfileOpen || infoOpen || offlineDialogOpen || pwaInstallOpen;

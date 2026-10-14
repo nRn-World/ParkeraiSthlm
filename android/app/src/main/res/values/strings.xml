@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ParkeraiSthlm</string>
+    <string name="title_activity_main">ParkeraiSthlm</string>
+    <string name="package_name">one.nrnworld.parkeraisthlm</string>
+    <string name="custom_url_scheme">one.nrnworld.parkeraisthlm</string>
+</resources>
