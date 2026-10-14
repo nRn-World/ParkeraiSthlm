@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#1266ee" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="index, follow" />
+    <title>Support – ParkeraiSthlm</title>
+    <meta
+      name="description"
+      content="Hjälp med ParkeraiSthlm: kontakt, vanliga frågor om parkering, taxor, GPS, påminnelser och offline-kartan."
+    />
+    <link rel="icon" href="icon.svg" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f4f7f6;
+        --card: #ffffff;
+        --text: #10161c;
+        --muted: #56616c;
+        --accent: #1266ee;
+        --line: rgba(16, 22, 28, 0.12);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1119;
+          --card: #131c26;
+          --text: #eef3f8;
+          --muted: #9aa7b4;
+          --line: rgba(255, 255, 255, 0.14);
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px 18px calc(48px + env(safe-area-inset-bottom, 0px));
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 720px; margin: 0 auto; }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      h1 { margin: 10px 0 6px; font-size: 30px; line-height: 1.2; }
+      h2 { margin: 32px 0 10px; font-size: 20px; }
+      h3 { margin: 20px 0 4px; font-size: 16px; }
+      .lead { color: var(--muted); margin-top: 0; }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px 20px;
+        margin: 18px 0;
+      }
+      ul { padding-left: 20px; margin: 10px 0; }
+      li { margin: 6px 0; }
+      a { color: var(--accent); }
+      .contact {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .note { color: var(--muted); font-size: 14px; }
+      .back { display: inline-block; margin-top: 26px; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="badge">ParkeraiSthlm</span>
+      <h1>Support</h1>
+      <p class="lead">
+        Här hittar du svar på det vanligaste om ParkeraiSthlm – parkeringskartan för Stockholm.
+        Hittar du inte svaret är du välkommen att mejla.
+      </p>
+
+      <section>
+        <h2>Kontakt</h2>
+        <p>Frågor, felrapporter och önskemål:</p>
+        <a class="contact" href="mailto:bynnrworld@gmail.com">bynnrworld@gmail.com</a>
+        <p class="note">
+          Skriv gärna vilken telefon och iOS-version du använder, och vad du gjorde när något
+          gick fel. Svar inom några dagar.
+        </p>
+      </section>
+
+      <h2>Vanliga frågor</h2>
+
+      <h3>Kartans taxa stämmer inte med skylten på gatan</h3>
+      <p>
+        Vägmärken och skyltning på plats gäller alltid före kartan. Taxeområdena bygger på
+        Stockholms stads publicerade uppgifter, och lokala undantag, tillfälliga arbeten och
+        helgdagar kan avvika. Mejla gärna adressen så kontrolleras punkten.
+      </p>
+
+      <h3>Appen hittar inte min position</h3>
+      <p>
+        Platsbehörigheten frågas bara om när du trycker på plats- eller ruttknappen. Har du
+        nekat tidigare öppnar du iOS <em>Inställningar → Integritet och säkerhet →
+        Platstjänster</em> och slår på för ParkeraiSthlm. Utan behörighet fungerar kartan
+        ändå, men ruttberäkningen startar från kartans mitt.
+      </p>
+
+      <h3>Jag får inga påminnelser</h3>
+      <p>
+        Påminnelser skapas i telefonen. Kontrollera att aviseringar är tillåtna i iOS
+        <em>Inställningar → Aviseringar → ParkeraiSthlm</em>, och att appen har varit öppen
+        sedan påminnelsen skapades – det finns ingen serverbaserad push i den här versionen.
+      </p>
+
+      <h3>Vad betyder Inställningar → Statistik?</h3>
+      <p>
+        Webbplatsen räknar anonymt besök och några få knapptryck, utan cookies och utan
+        personuppgifter. Den inbyggda appen skickar ingen statistik alls. Mer finns i
+        <a href="privacy.html">integritetspolicyn</a>.
+      </p>
+
+      <h3>Kartan fungerar inte utan internet</h3>
+      <p>
+        Öppna "i"-knappen och välj <em>Gör appen redo offline</em>. Då sparas kartrutor för
+        området i telefonen och fungerar i flygplansläge. Ny adressökning och vägrutt kräver
+        fortfarande internet.
+      </p>
+
+      <h3>Kan jag betala parkeringen i appen?</h3>
+      <p>
+        Nej. Betala P är nedlagt och appen visar i stället länkar till de officiella guiderna
+        för EasyPark, Parkster och Stockholm Parkering, eftersom zonkoden på skylten avgör
+        var du betalar.
+      </p>
+
+      <h3>Var kommer uppgifterna ifrån?</h3>
+      <ul>
+        <li>Stockholms stad – taxeområden, gatuparkering, garage och avgifter</li>
+        <li>OpenStreetMap och Overpass – kartdata och parkeringsplatser</li>
+        <li>Open Charge Map – laddplatser</li>
+        <li>Stockholm Parkering och Nobil – lediga platser i garage</li>
+        <li>OSRM – vägbeskrivningar</li>
+      </ul>
+      <p class="note">Tack till alla som bidrar med öppna data – utan dem hade appen inte funnits.</p>
+
+      <a class="back" href="./">← Tillbaka till ParkeraiSthlm</a>
+    </main>
+  </body>
+</html>

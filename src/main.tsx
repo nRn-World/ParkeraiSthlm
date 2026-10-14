@@ -2,8 +2,11 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
+import { isNativeApp } from "./native";
 
-if ("serviceWorker" in navigator) {
+// Den inbyggda appen har allt i paketet och saknar stöd för service workers (den körs på
+// capacitor://) – där laddas filerna direkt från appen i stället.
+if ("serviceWorker" in navigator && !isNativeApp()) {
   const serviceWorkerUrl = `${import.meta.env.BASE_URL}sw.js`;
   const serviceWorkerScope = import.meta.env.BASE_URL;
 

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#1266ee" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="index, follow" />
+    <title>Integritetspolicy – ParkeraiSthlm</title>
+    <meta
+      name="description"
+      content="Så hanterar ParkeraiSthlm dina uppgifter: allt du sparar ligger i din telefon, ingen positionshistorik skickas och ingen statistik samlas in i den inbyggda appen."
+    />
+    <link rel="icon" href="icon.svg" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f4f7f6;
+        --card: #ffffff;
+        --text: #10161c;
+        --muted: #56616c;
+        --accent: #1266ee;
+        --line: rgba(16, 22, 28, 0.12);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1119;
+          --card: #131c26;
+          --text: #eef3f8;
+          --muted: #9aa7b4;
+          --line: rgba(255, 255, 255, 0.14);
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px 18px calc(48px + env(safe-area-inset-bottom, 0px));
+        background: var(--bg);
+        color: var(--text);
+        font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      main { max-width: 720px; margin: 0 auto; }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--accent);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      h1 { margin: 10px 0 6px; font-size: 30px; line-height: 1.2; }
+      h2 { margin: 34px 0 10px; font-size: 20px; }
+      h3 { margin: 22px 0 6px; font-size: 16px; }
+      p, li { color: var(--text); }
+      .lead { color: var(--muted); margin-top: 0; }
+      .updated { color: var(--muted); font-size: 14px; }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 18px 20px;
+        margin: 18px 0;
+      }
+      ul { padding-left: 20px; margin: 10px 0; }
+      li { margin: 6px 0; }
+      a { color: var(--accent); }
+      table { width: 100%; border-collapse: collapse; font-size: 15px; }
+      th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+      .note { font-size: 14px; color: var(--muted); }
+      .back { display: inline-block; margin-top: 26px; font-weight: 600; }
+      hr { border: none; border-top: 1px solid var(--line); margin: 42px 0 26px; }
+      .en { color: var(--muted); font-size: 14px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <span class="badge">ParkeraiSthlm</span>
+      <h1>Integritetspolicy</h1>
+      <p class="lead">
+        ParkeraiSthlm är en parkeringskarta för Stockholm. Appen har inga konton, ingen inloggning och
+        ingen server som lagrar dina uppgifter. Allt du sparar i appen ligger kvar i din egen telefon.
+      </p>
+      <p class="updated">Senast uppdaterad: 14 oktober 2026</p>
+
+      <section>
+        <h2>Kort version</h2>
+        <ul>
+          <li><strong>Inga konton.</strong> Ingen registrering, inget lösenord, ingen e-postadress.</li>
+          <li><strong>Ingen positionshistorik skickas.</strong> Din position används bara i telefonen, för att visa dig på kartan och räkna ut vägen.</li>
+          <li><strong>Ingen spårning och inga cookies.</strong> Appen har ingen reklam, inga spårningsverktyg och säljer inga uppgifter.</li>
+          <li><strong>Ingen statistik i den inbyggda appen.</strong> Den inbyggda iOS-appen skickar ingen användningsstatistik alls.</li>
+          <li><strong>Du bestämmer.</strong> Stäng av platsbehörigheten eller rensa appens data i iOS-inställningarna, så är allt borta.</li>
+        </ul>
+      </section>
+
+      <h2>Vilka uppgifter hanteras – och var?</h2>
+      <table>
+        <thead>
+          <tr><th>Uppgift</th><th>Var den finns</th><th>Varför</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Din position</td>
+            <td>Bara i telefonen, medan appen används</td>
+            <td>Visa dig på kartan, hitta parkering nära dig och guida dig till en plats. Skickas aldrig till oss.</td>
+          </tr>
+          <tr>
+            <td>Sparad bil, registreringsnummer, fordonsprofil, P-skiva, favoriter, senaste sökning och inställningar</td>
+            <td>I telefonens lokala lagring (localStorage och IndexedDB)</td>
+            <td>Att appen ska komma ihåg det du själv har sparat. Rensas när du tar bort appen.</td>
+          </tr>
+          <tr>
+            <td>Cachad parkeringsdata och nedladdade kartrutor</td>
+            <td>I telefonens lokala lagring</td>
+            <td>Att kartan och taxorna ska fungera offline.</td>
+          </tr>
+          <tr>
+            <td>Antal besök och några få knapptryck</td>
+            <td>Endast på webbplatsen, hos Umami Cloud (EU)</td>
+            <td>Att utvecklaren ska se vilka funktioner som används. Cookiefritt, inga personuppgifter, ingen spårning mellan sidor eller över tid. Gäller inte den inbyggda appen.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h2>Platsbehörighet och aviseringar</h2>
+      <p>
+        Appen frågar bara om platsen när du trycker på knappen för din position eller startar en rutt.
+        Positionen används i telefonen och skickas inte vidare till oss. Påminnelser om P-skivan och om
+        din parkerade bil skapas lokalt i telefonen; de kräver att iOS tillåter aviseringar och att appen
+        har varit öppen sedan påminnelsen skapades.
+      </p>
+
+      <h2>Tjänster som appen hämtar uppgifter från</h2>
+      <p>
+        För att visa karta, taxor, laddplatser och lediga platser hämtar appen uppgifter över internet.
+        Dessa förfrågningar innehåller den information som krävs för att svara (till exempel adressen du
+        söker eller ett kartområde) – aldrig din identitet. Nedladdade kartrutor skickas av respektive
+        tjänst, och därför gäller deras egna villkor:
+      </p>
+      <ul>
+        <li>Stockholms stad (taxeområden, gatuparkering, garage och avgifter)</li>
+        <li>OpenStreetMap och Overpass (kartdata och parkeringsplatser)</li>
+        <li>Open Charge Map (laddplatser)</li>
+        <li>Stockholm Parkering och Nobil (lediga platser i garage)</li>
+        <li>OSRM (vägbeskrivningar)</li>
+        <li>Umami Cloud (endast webbplatsens besöksstatistik)</li>
+      </ul>
+      <p class="note">
+        Appen har ingen egen server, inga användarkonton och skickar ingen data till utvecklaren.
+      </p>
+
+      <h2>Dina rättigheter</h2>
+      <p>
+        Eftersom uppgifterna ligger i din telefon och inte hos oss finns det inget register att begära ut,
+        rätta eller radera hos oss. Du tar bort allt genom att ta bort appen, eller genom att rensa appens
+        data i iOS-inställningarna. Har du frågor om integritet är du välkommen att höra av dig.
+      </p>
+
+      <h2>Barn</h2>
+      <p>
+        Appen riktar sig inte särskilt till barn, samlar inte in några personuppgifter och innehåller
+        ingen reklam.
+      </p>
+
+      <h2>Ändringar</h2>
+      <p>
+        Om policyn ändras uppdateras datumet ovan och den nya versionen publiceras på den här adressen.
+      </p>
+
+      <h2>Kontakt</h2>
+      <p>
+        Frågor om appen eller den här policyn:
+        <a href="mailto:bynnrworld@gmail.com">bynnrworld@gmail.com</a>
+      </p>
+
+      <hr />
+
+      <h2 class="en">Privacy policy (English summary)</h2>
+      <p class="en">
+        ParkeraiSthlm is a parking map for Stockholm. There is no account, no login and no developer
+        server: everything you save – saved car, registration number, parking disc timer, favourites,
+        settings and offline map data – stays in local storage on your device. Your location is used on
+        the device only, to show you on the map and to calculate directions, and is never sent to us.
+        The app contains no advertising, no cookies and no trackers, and no usage statistics are
+        collected in the native iOS app. The website only uses cookieless, EU-hosted Umami Cloud
+        analytics to count visits and a few button presses, without personal data. Map, tariff and
+        charging data are fetched from the City of Stockholm, OpenStreetMap/Overpass, Open Charge Map,
+        Stockholm Parkering, Nobil and OSRM; those requests contain the search or map area only, never
+        your identity. Permissions – location and notifications – are optional and can be revoked in
+        iOS Settings at any time. Contact:
+        <a href="mailto:bynnrworld@gmail.com">bynnrworld@gmail.com</a>.
+      </p>
+
+      <a class="back" href="./">← Tillbaka till ParkeraiSthlm</a>
+    </main>
+  </body>
+</html>

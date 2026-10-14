@@ -235,6 +235,29 @@ Tryck på **"Spara offline"** i appen för att ladda ner kartvyer och taxedata f
 
 ---
 
+## 🍏 iPhone- och iPad-app (App Store)
+
+Samma app finns även som inbyggd iOS-app. Xcode-projektet ligger i `ios/` och byggs med
+Capacitor 8; webbappen på GitHub Pages är oförändrad.
+
+```bash
+npm ci
+npm run ios:sync      # ikoner + appbygge + synk in i ios/
+npm run ios:open      # öppnar projektet i Xcode (kräver macOS)
+```
+
+- **Bygga utan Mac:** [codemagic.yaml](./codemagic.yaml) bygger och skickar bygget till
+  TestFlight på en moln-Mac. Hela vägen står i [docs/APPSTORE.md](./docs/APPSTORE.md).
+- **Butikstexter och integritetssvar:** [docs/appstore-text.md](./docs/appstore-text.md).
+- I den inbyggda appen blir påminnelser riktiga systemnotiser, externa länkar öppnas i
+  telefonens webbläsare och besöksstatistiken är avstängd. Se [src/native.ts](./src/native.ts).
+- Eftersom service workers inte finns på `capacitor://` sparas offline-kartans rutor i
+  IndexedDB i stället: [src/tile-cache.ts](./src/tile-cache.ts).
+- Integritetspolicy: <https://nrnworld.one/ParkeraiSthlm/privacy.html> ·
+  Support: <https://nrnworld.one/ParkeraiSthlm/support.html>
+
+---
+
 ## 🤝 Bidra till projektet
 
 Bidrag är välkomna! Om du hittar felaktig taxeinformation, vill lägga till parkeringsplatser eller förbättra UX:

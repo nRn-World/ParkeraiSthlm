@@ -1,0 +1,78 @@
+# Molnbygge av iOS-appen i Codemagic (cadmium: codemagic.io).
+#
+# Du behöver ingen Mac: Codemagic lånar en macOS-maskin, bygger webbappen, synkar in den i
+# iOS-projektet och arkiverar en signerad .ipa som kan skickas till TestFlight eller
+# App Store. Kostnaden ligger inom de 500 kostnadsfria macOS-minuterna per månad som
+# Codemagic ger personliga konton.
+#
+# Stegen i Codemagic-gränssnittet finns i docs/APPSTORE.md ("Bygg i molnet utan Mac").
+# Kort: 1) koppla GitHub-repot, 2) lägg in App Store Connect-nyckeln under
+# Team integrations, 3) ladda upp distributionscertifikat och profiler under
+# Code signing identities, 4) kör arbetsflödet.
+workflows:
+  ios-release:
+    name: ParkeraiSthlm – App Store
+    max_build_duration: 90
+    instance_type: mac_mini_m2
+
+    integrations:
+      # Namnet du ger App Store Connect-nyckeln i Codemagic (inte nyckeln själv).
+      app_store_connect: ParkeraiSthlmAppStore
+
+    environment:
+      # Capacitor 8 kräver Xcode 26 eller senare och Node 22 eller senare.
+      xcode: latest
+      node: v22.11.0
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: one.nrnworld.parkeraisthlm
+      vars:
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
+        XCODE_SCHEME: "App"
+
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: "ios-*"
+          include: true
+
+    scripts:
+      - name: Beroenden (enligt package-lock.json)
+        script: npm ci
+
+      - name: Ikoner och startbilder
+        script: npm run ios:assets
+
+      - name: Bygg webbappen för den inbyggda appen
+        script: npm run build:native
+
+      - name: Synka in i iOS-projektet
+        script: npx cap sync ios
+
+      - name: Sätt versionsnummer
+        script: |
+          cd "$CM_BUILD_DIR/ios/App"
+          agvtool new-marketing-version 1.0
+          agvtool new-version -all "${PROJECT_BUILD_NUMBER:-$BUILD_NUMBER}"
+
+      - name: Lägg in signeringsprofiler i Xcode-projektet
+        script: xcode-project use-profiles
+
+      - name: Bygg och exportera IPA
+        script: |
+          xcode-project build-ipa \
+            --project "$CM_BUILD_DIR/$XCODE_PROJECT" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        # Första gången: skicka bara till TestFlight och provkör på en riktig telefon.
+        # Ändra till true när du vill att bygget går direkt till granskning.
+        submit_to_testflight: true
+        submit_to_app_store: false

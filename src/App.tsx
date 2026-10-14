@@ -5,6 +5,17 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type { Feature as GeoFeature, FeatureCollection as GeoFeatureCollection } from "geojson";
 import { ensureIdbVersion, idbDel, idbGet, idbSet } from "./idb-cache";
 import { trackEvent } from "./analytics";
+import { downloadTiles, nativeTileRequestTransform } from "./tile-cache";
+import {
+  getCurrentLocation,
+  initNativeShell,
+  isNativeApp,
+  openExternalUrl as openNativeUrl,
+  requestNotificationPermission,
+  setNativeStatusBar,
+  showNotification,
+  watchLocation,
+} from "./native";
 import {
   DRIVING_PITCH,
   OSM_RASTER_STYLE,
@@ -616,7 +627,9 @@ function navigationLinks(lat: number, lng: number) {
 }
 
 function openExternalUrl(url: string) {
-  window.open(url, "_blank", "noopener,noreferrer");
+  // På webben en ny flik, i den inbyggda appen systemets webbläsare – så att appens
+  // eget fönster inte kappas av Google Maps, Apple Maps eller Waze.
+  void openNativeUrl(url);
 }
 
 function evConnectionGroups(type: string): EvConnectorFilter[] {
@@ -1930,6 +1943,16 @@ function App() {
       ?.setAttribute("content", darkMode ? "#0b1119" : "#1266ee");
   }, [darkMode]);
 
+  // Den inbyggda appens statusrad: ljus text ovanpå appens egen yta.
+  useEffect(() => {
+    void setNativeStatusBar();
+  }, []);
+
+  // Skalet runt webbvyn i den inbyggda appen: startbilden tas bort när appen är redo.
+  useEffect(() => {
+    void initNativeShell();
+  }, []);
+
   // Skapa virtuell parkeringsplats för klickad koordinat för rutt/navigering
   const clickedPlace = useMemo<ParkingPlace | null>(() => {
     if (!clickedPosition) return null;
@@ -1968,17 +1991,12 @@ function App() {
     }, action ? 6500 : 3600);
   }, []);
 
-  // Systemnotiser fungerar bara när sidan är öppen. Det finns ingen serverbaserad
-  // push i den här versionen, så påminnelsen är en lokal notis medan appen körs.
+  // Det finns ingen serverbaserad push i den här versionen, så påminnelsen skapas medan
+  // appen körs. På webben blir den en webbläsarnotis, i den inbyggda appen en riktig
+  // systemnotis från iOS (se src/native.ts).
   const notifyParkedCar = useCallback((message: string, tag: string) => {
     showNotice(message);
-    try {
-      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        new Notification("Din parkerade bil", { body: message, tag });
-      }
-    } catch {
-      // Notiser är ett tillägg – appens egen ruta visas ändå.
-    }
+    void showNotification("Din parkerade bil", message, tag);
   }, [showNotice]);
 
   // Påminnelse: avgiftsändringar som rör gratis parkering är de som betyder något –
@@ -2221,9 +2239,12 @@ function App() {
   useEffect(() => {
     const isStandaloneMode = window.matchMedia("(display-mode: standalone)").matches ||
                           (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-    setIsStandalone(isStandaloneMode);
+    // Den inbyggda appen är redan installerad – den ska aldrig be om att bli tillagd på
+    // hemmaskärmen, och dess yta räknas som standalone.
+    const nativeApp = isNativeApp();
+    setIsStandalone(isStandaloneMode || nativeApp);
 
-    const shouldOfferInstall = isMobileDevice() && !isStandaloneMode && !hasRecentPwaInstallDismissal();
+    const shouldOfferInstall = !nativeApp && isMobileDevice() && !isStandaloneMode && !hasRecentPwaInstallDismissal();
     const openInstallPrompt = () => {
       setCanInstall(true);
       setInstallPlatform(isIosDevice() ? "ios" : "android");
@@ -2304,6 +2325,9 @@ function App() {
       bearing: 0,
       attributionControl: { compact: true },
       fadeDuration: 0,
+      // På webben undefined (service workern sköter offline-kartan), i den inbyggda appen
+      // en krok som läser sparade kartrutor från telefonens IndexedDB.
+      transformRequest: nativeTileRequestTransform(),
     });
     mapRef.current = map;
     applyMap3dInteractions(map, map3dRef.current);
@@ -3078,25 +3102,22 @@ function App() {
   }, []);
 
   const locateUser = () => {
-    if (!navigator.geolocation) {
-      showNotice("Din webbläsare saknar stöd för GPS");
-      return;
-    }
     setLocating(true);
-    navigator.geolocation.getCurrentPosition(
+    void getCurrentLocation().then(
       (position) => {
-        const next: LatLng = [position.coords.latitude, position.coords.longitude];
-        updateUserLocation(next, position.coords.accuracy);
+        const next: LatLng = [position.lat, position.lng];
+        updateUserLocation(next, position.accuracy);
         setClickedPosition(null);
         setLocating(false);
         mapRef.current?.flyTo({ center: toLngLat(next), zoom: 16, duration: 1200 });
         showNotice("GPS-position hittad");
       },
-      () => {
+      (error: unknown) => {
         setLocating(false);
-        showNotice("Kunde inte läsa din position. Kontrollera platsbehörigheten.");
+        showNotice(error instanceof Error && error.message === "geolocation-missing"
+          ? "Din webbläsare saknar stöd för GPS"
+          : "Kunde inte läsa din position. Kontrollera platsbehörigheten.");
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 10000 },
     );
   };
 
@@ -3188,33 +3209,26 @@ function App() {
       void calculateRoute(destination, userPosition, true);
       return;
     }
-    if (!navigator.geolocation) {
-      showNotice("GPS saknas. Rutten startar från kartans mitt.");
-      void calculateRoute(destination, viewCenter, false);
-      return;
-    }
-
     setRouteLoading(true);
-    navigator.geolocation.getCurrentPosition(
+    void getCurrentLocation().then(
       (position) => {
-        const start: LatLng = [position.coords.latitude, position.coords.longitude];
-        updateUserLocation(start, position.coords.accuracy);
+        const start: LatLng = [position.lat, position.lng];
+        updateUserLocation(start, position.accuracy);
         void calculateRoute(destination, start, true);
       },
       () => {
         showNotice("GPS nekades. Rutten startar från kartans mitt.");
         void calculateRoute(destination, viewCenter, false);
       },
-      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 10_000 },
     );
   };
 
   useEffect(() => {
-    if (!routeInfo?.tracking || routeInfo.arrived || !navigator.geolocation) return;
-    const watchId = navigator.geolocation.watchPosition(
+    if (!routeInfo?.tracking || routeInfo.arrived) return;
+    const stopWatching = watchLocation(
       (position) => {
-        const next: LatLng = [position.coords.latitude, position.coords.longitude];
-        updateUserLocation(next, position.coords.accuracy, true, position.coords.heading);
+        const next: LatLng = [position.lat, position.lng];
+        updateUserLocation(next, position.accuracy, true, position.heading);
         const activeRoute = routeInfoRef.current;
         if (!activeRoute?.tracking) return;
 
@@ -3235,9 +3249,8 @@ function App() {
         }
       },
       () => showNotice("GPS-spårning avbröts. Kontrollera platsbehörigheten."),
-      { enableHighAccuracy: true, timeout: 12_000, maximumAge: 5_000 },
     );
-    return () => navigator.geolocation.clearWatch(watchId);
+    return stopWatching;
   }, [calculateRoute, routeInfo?.arrived, routeInfo?.tracking, showNotice, updateUserLocation]);
 
   const dismissPwaInstall = () => {
@@ -3321,17 +3334,35 @@ function App() {
       return;
     }
     setOfflineProgress({ cached: 0, total: urls.length });
+    const finishOffline = () => {
+      localStorage.setItem("parksthlm-offline-ready", "true");
+      setOfflineReady(true);
+      setOfflineProgress(null);
+      showNotice("Offline-läge klart!");
+    };
+
+    // Den inbyggda appen körs på capacitor:// och har ingen service worker. Där sparas
+    // kartrutorna i telefonens IndexedDB i stället och läses tillbaka via
+    // transformRequest (se src/tile-cache.ts) – offline-läget fungerar likadant.
+    if (isNativeApp()) {
+      try {
+        await downloadTiles(urls, (cached, total) => setOfflineProgress({ cached, total }));
+        finishOffline();
+      } catch {
+        setOfflineProgress(null);
+        showNotice("Misslyckades att starta nedladdning.");
+      }
+      return;
+    }
+
     try {
       const registration = await navigator.serviceWorker!.ready;
       const handler = (e: MessageEvent) => {
         if (e.data?.type === "OFFLINE_PROGRESS") {
           setOfflineProgress({ cached: e.data.cached, total: e.data.total });
           if (e.data.cached >= e.data.total) {
-            localStorage.setItem("parksthlm-offline-ready", "true");
-            setOfflineReady(true);
-            setOfflineProgress(null);
-            showNotice("Offline-läge klart!");
             navigator.serviceWorker.removeEventListener("message", handler);
+            finishOffline();
           }
         }
       };
@@ -3553,13 +3584,9 @@ function App() {
       showNotice("Påminnelsen är avstängd");
       return;
     }
-    try {
-      if (typeof Notification !== "undefined" && Notification.permission === "default") {
-        void Notification.requestPermission().catch(() => "denied");
-      }
-    } catch {
-      // Utan stöd för notiser används appens egen ruta.
-    }
+    // Behörigheten frågas bara om när påminnelsen faktiskt slås på: webbläsarnotis på
+    // webben, riktig systemnotis i den inbyggda appen.
+    void requestNotificationPermission();
     showNotice(`Påminnelse på · ${reminderLeadOf(parkedCar)} min innan avgiften ändras eller servicetiden börjar`);
   };
 
@@ -3574,13 +3601,9 @@ function App() {
     discWarnedRef.current = null;
     discFiredRef.current = null;
     trackEvent("P-skiva startad", { minuter: discMinutes });
-    try {
-      if (typeof Notification !== "undefined" && Notification.permission === "default") {
-        void Notification.requestPermission().catch(() => "denied");
-      }
-    } catch {
-      // Utan stöd för notiser används appens egen ruta.
-    }
+    // Behörigheten frågas bara om när påminnelsen faktiskt slås på: webbläsarnotis på
+    // webben, riktig systemnotis i den inbyggda appen.
+    void requestNotificationPermission();
     showNotice(`P-skiva startad · ${formatDuration(discMinutes * 60_000)} – du får en notis när tiden går ut`);
   };
 
@@ -4633,14 +4656,15 @@ function App() {
                 <div><strong>Boende</strong><span>Boendefiltret använder boendetaxan i föreskriftstexten. Tillståndets område och krav måste kontrolleras mot skyltning och stadens tillståndsregler.</span></div>
                 <div><strong>Betalning</strong><span>Betala P är nedlagd. Platskortet länkar till officiella guider för EasyPark, Parkster och Stockholm Parkering eftersom zonkoden på skylten avgör.</span></div>
                 <div><strong>Beläggning</strong><span>Inget öppet liveflöde för lediga platser hittades. Garage visar därför kapacitet, men inte grön/gul/röd beläggning.</span></div>
-                <div><strong>Påminnelser</strong><span>Påminnelser är lokala och kräver att appen är öppen. Det finns ingen serverbaserad push i den här versionen.</span></div>
+                <div><strong>Påminnelser</strong><span>Påminnelser skapas lokalt i telefonen och kräver att appen har varit öppen. I den inbyggda appen visas de som systemnotiser från iOS; det finns ingen serverbaserad push i den här versionen.</span></div>
                 <div><strong>Offline</strong><span>App, taxor, lokala parkeringar, GPS och besökta kartvyer fungerar utan nät. Ny adressökning och vägrutt kräver internet.</span></div>
-                <div><strong>Statistik</strong><span>Appen räknar anonymt antal besök och några få knapptryck (t.ex. P-skiva, dela och parkera här) för att utvecklaren ska se vad som används. Inga cookies, inga personuppgifter och ingen spårning av dig mellan olika sidor.</span></div>
+                <div><strong>Statistik</strong><span>Webbplatsen räknar anonymt antal besök och några få knapptryck (t.ex. P-skiva, dela och parkera här) för att utvecklaren ska se vad som används. Inga cookies, inga personuppgifter och ingen spårning av dig mellan olika sidor. Den inbyggda appen skickar ingen statistik alls.</span></div>
               </div>
               <div className="warning-box"><CircleAlert size={18} /><span><strong>Viktigt:</strong> Vägmärken och skyltning på plats gäller alltid före kartan. Kontrollera även servicedag, max tid och eventuella tillståndskrav.</span></div>
               <div className="source-links">
-                <a href="https://parkering.stockholm/betala-parkering/taxeomraden-avgifter/" target="_blank" rel="noreferrer">Stockholms stads taxor <ExternalLink size={14} /></a>
-                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap <ExternalLink size={14} /></a>
+                <a href="https://parkering.stockholm/betala-parkering/taxeomraden-avgifter/" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://parkering.stockholm/betala-parkering/taxeomraden-avgifter/"); }}>Stockholms stads taxor <ExternalLink size={14} /></a>
+                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://www.openstreetmap.org/copyright"); }}>OpenStreetMap <ExternalLink size={14} /></a>
+                <a href="https://nrnworld.one/ParkeraiSthlm/privacy.html" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://nrnworld.one/ParkeraiSthlm/privacy.html"); }}>Integritetspolicy <ExternalLink size={14} /></a>
               </div>
               <button type="button" className="modal-action" onClick={() => { void saveOffline(); setInfoOpen(false); }}><Download size={17} /> {offlineReady ? "Offline-data är sparad" : offlineProgress ? "Laddar ner..." : "Gör appen redo offline"}</button>
             </motion.section>

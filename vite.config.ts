@@ -129,8 +129,11 @@ function localDataProxy(env: Record<string, string>) {
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
+  // Den inbyggda appen (Capacitor) laddar filerna från paketets rot, medan webbplatsen
+  // på GitHub Pages ligger under /ParkeraiSthlm/.
+  const isNativeBuild = mode === "native";
   return {
-    base: env.VITE_BASE_URL ?? "/",
+    base: isNativeBuild ? "/" : env.VITE_BASE_URL ?? "/",
     plugins: [react(), tailwindcss(), viteSingleFile(), localDataProxy(env)],
     resolve: {
       alias: {
