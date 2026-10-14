@@ -76,14 +76,24 @@ Appen visar Stockholms stads officiella fem taxeområden (Taxa 1–5) med korrek
 - Betala P är nedlagd; zonkoden på skylten avgör vilken app som gäller
 - Inga zonkoder gissas i appen
 
+### 🔗 Dela parkering
+- Dela-knappen på varje platskort skapar en länk med `?spot=<id>&lat=..&lng=..&title=..`
+- Länken öppnar platsen direkt i appen (exakt plats via id, koordinater som reserv)
+
+### ⏱️ P-skiva-timer
+- Platskortet visar maxtid från föreskrift (max minuter/timmar) eller OSM (maxstay)
+- Välj 30 min / 1 / 2 / 3 tim och starta – nedräkning i kortet och global banner
+- Varnar 10 min innan och notifierar när tiden går ut (lokalt, appen måste vara öppen)
+
 ### 🚗 Min parkerade bil
 - Spara var bilen står (GPS, vald parkering eller valfri kartpunkt) med plats och anteckning
+- Registreringsnummer (valfritt) i Fordonsprofilen visas på bilkortet
 - Taxan på platsen sparas vid tillfället: kortet visar **pris nu**, när avgiften ändras och en nedräkning till dess
 - Valfri påminnelse 15 eller 30 minuter innan gratisperioden tar slut, avgiften börjar eller en tolkad servicetid börjar. Notiser är lokala och kräver att appen är öppen; det finns ingen serverbaserad push
 
 ### 📡 Live-parkeringsdata
 - Hämtar parkeringsplatser från **OpenStreetMap Overpass API** inom 7 km från Stockholms centrum
-- Cachas lokalt i webbläsaren (uppdateras var 24:e timme)
+- Cachas i IndexedDB i webbläsaren (uppdateras var 24:e timme) – rymmer stora datamängder utan localStorage-tak
 - Förkonfigurerade kända p-hus och garage (Citygaraget, Gallerian, Medborgarplatsen, Ringen m.fl.)
 
 ### 📴 100 % Offline-kapacitet
@@ -104,7 +114,7 @@ Appen visar Stockholms stads officiella fem taxeområden (Taxa 1–5) med korrek
 | [React](https://react.dev/) | 19 | UI-komponentramverk |
 | [TypeScript](https://www.typescriptlang.org/) | 5.9 | Typsäker JavaScript |
 | [Vite](https://vite.dev/) | 7 | Byggverktyg & dev-server |
-| [Leaflet.js](https://leafletjs.com/) | 1.9 | Interaktiv karta |
+| [MapLibre GL JS](https://maplibre.org/) | 6 | Interaktiv karta med 3D-perspektiv i körläge (2D/3D-val i Profil) |
 | [OpenStreetMap](https://www.openstreetmap.org/) | – | Kartbilder & adressdata |
 | [Framer Motion](https://www.framer.com/motion/) | 12 | Animationer & transitions |
 | [Lucide React](https://lucide.dev/) | 1.24 | Ikoner |

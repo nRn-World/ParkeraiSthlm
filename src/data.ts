@@ -19,6 +19,9 @@ export type ParkingPlace = {
   priceText: string;
   note: string;
   serviceText?: string;
+  // längsta tillåtna parkeringstid i minuter (t.ex. P-skiva / 2-timmarsregel).
+  // Används av P-skivetimern. Saknas när ingen maxtid rapporterats.
+  maxMinutes?: number;
   spaces?: number;
   disabledSpaces?: number;
   mcSpaces?: number;

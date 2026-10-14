@@ -1,12 +1,33 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import L, { type LayerGroup, type Map as LeafletMap } from "leaflet";
-import "leaflet/dist/leaflet.css";
+import { Map as MapLibreMap, Marker as MapLibreMarker, setWorkerUrl } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
+import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import type { Feature as GeoFeature, FeatureCollection as GeoFeatureCollection } from "geojson";
+import { ensureIdbVersion, idbDel, idbGet, idbSet } from "./idb-cache";
+import {
+  DRIVING_PITCH,
+  OSM_RASTER_STYLE,
+  applyMap3dInteractions,
+  boundsOf,
+  circlePolygon,
+  emptyFeatureCollection,
+  makeMarkerElement,
+  readMap3dEnabled,
+  removeAllMarkers,
+  syncMarkers,
+  toLatLng,
+  toLngLat,
+  writeMap3dEnabled,
+} from "./maplibre-map";
+
+setWorkerUrl(workerUrl);
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Accessibility,
   Bell,
   BellRing,
   Bike,
+  Box as BoxIcon,
   Building2,
   CarFront,
   ChevronDown,
@@ -18,6 +39,7 @@ import {
   Info,
   ListFilter,
   LocateFixed,
+  Map as MapIcon,
   MapPin,
   Menu,
   Moon,
@@ -37,6 +59,7 @@ import {
   X,
   Zap,
   Clock3,
+  Timer as TimerIcon,
   Trash2,
   ZoomIn,
   ZoomOut,
@@ -77,6 +100,10 @@ type VehicleProfile = "car" | "ev" | "mc" | "disabled";
 type ResultSort = "distance" | "price" | "free" | "power";
 type EvConnectorFilter = "all" | "type2" | "ccs" | "chademo" | "tesla";
 type ReminderLeadMinutes = 15 | 30;
+type DiscTimer = { endsAt: number; minutes: number; placeId: string; placeName: string };
+const DISC_TIMER_STORAGE_KEY = "parksthlm-disc-timer-v1";
+const DISC_PRESETS = [30, 60, 120, 180];
+const DISC_WARN_MINUTES = 10;
 type ParkedCar = {
   lat: number;
   lng: number;
@@ -91,6 +118,8 @@ type ParkedCar = {
   tariffLabel: string | null;
   reminder: boolean;
   reminderLead?: ReminderLeadMinutes;
+  // Regnr-snapshot från profilen vid parkeringstillfället (valfritt).
+  reg: string | null;
 };
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -113,6 +142,12 @@ const AREA_SEARCH_RADIUS_KM = 1.15;
 const FAVORITES_STORAGE_KEY = "parksthlm-favorites-v1";
 const PARKED_CAR_STORAGE_KEY = "parksthlm-parked-car-v1";
 const VEHICLE_PROFILE_STORAGE_KEY = "parksthlm-vehicle-profile-v1";
+const VEHICLE_REG_STORAGE_KEY = "parksthlm-vehicle-reg-v1";
+
+// Svenskt regnr: versaler + siffror, max 7 tecken (ABC123 / ABC12X). Tomt = valfritt.
+function normalizeReg(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 7);
+}
 // Listan visar en sida i taget – annars går resten av de tusentals platserna inte att nå.
 const RESULTS_PAGE_SIZE = 20;
 const RESULT_SORTS: { value: ResultSort; label: string }[] = [
@@ -126,10 +161,9 @@ const EV_RESULT_SORTS: { value: ResultSort; label: string }[] = [
 ];
 const REMINDER_LEAD_OPTIONS: ReminderLeadMinutes[] = [15, 30];
 // Sparade bilar från äldre versioner saknar vald framförhållning. Femton minuter
-// är samma beteende som tidigare och används därför som standard.
-// Höjs när tolkningen av Trafikkontorets föreskrifter ändras – då måste gamla cachade
-// poster läsas om i stället för att ligga kvar utan nya fält.
-const OFFICIAL_DATA_CACHE_VERSION = 5;
+// är samma beteende som tidigare och används därför som standard.  // Höjs när tolkningen av Trafikkontorets föreskrifter ändras – då måste gamla cachade
+  // poster läsas om i stället för att ligga kvar utan nya fält.
+  const OFFICIAL_DATA_CACHE_VERSION = 6;
 const OFFLINE_MIN_ZOOM = 10;
 const OFFLINE_MAX_ZOOM = 16;
 // Tak för offline-nedladdningen: skyddar telefonens lagring och OpenStreetMaps tileservrar.
@@ -141,16 +175,16 @@ function offlineTileSizeLabel(tileCount: number) {
   return `${Math.max(1, Math.round((tileCount * OFFLINE_TILE_KB) / 1024))} MB`;
 }
 
-function collectOfflineTileUrls(bounds: ReturnType<LeafletMap["getBounds"]>) {
+function collectOfflineTileUrls(bounds: { north: number; south: number; east: number; west: number }) {
   const urls: string[] = [];
   for (let zoom = OFFLINE_MIN_ZOOM; zoom <= OFFLINE_MAX_ZOOM; zoom += 1) {
     const tiles = 2 ** zoom;
-    const xMin = Math.max(0, Math.floor(((bounds.getWest() + 180) / 360) * tiles));
-    const xMax = Math.min(tiles - 1, Math.floor(((bounds.getEast() + 180) / 360) * tiles));
+    const xMin = Math.max(0, Math.floor(((bounds.west + 180) / 360) * tiles));
+    const xMax = Math.min(tiles - 1, Math.floor(((bounds.east + 180) / 360) * tiles));
     if (xMax < xMin) continue;
     const latRad = (lat: number) => (lat * Math.PI) / 180;
-    const yMin = Math.max(0, Math.floor((1 - Math.log(Math.tan(latRad(bounds.getNorth())) + 1 / Math.cos(latRad(bounds.getNorth()))) / Math.PI) / 2 * tiles));
-    const yMax = Math.min(tiles - 1, Math.floor((1 - Math.log(Math.tan(latRad(bounds.getSouth())) + 1 / Math.cos(latRad(bounds.getSouth()))) / Math.PI) / 2 * tiles));
+    const yMin = Math.max(0, Math.floor((1 - Math.log(Math.tan(latRad(bounds.north)) + 1 / Math.cos(latRad(bounds.north))) / Math.PI) / 2 * tiles));
+    const yMax = Math.min(tiles - 1, Math.floor((1 - Math.log(Math.tan(latRad(bounds.south)) + 1 / Math.cos(latRad(bounds.south))) / Math.PI) / 2 * tiles));
     if (yMax < yMin) continue;
     for (let x = xMin; x <= xMax; x += 1) {
       for (let y = yMin; y <= yMax; y += 1) {
@@ -176,6 +210,51 @@ function readLocalStorage<T>(key: string, fallback: T): T {
     return value ? JSON.parse(value) as T : fallback;
   } catch {
     return fallback;
+  }
+}
+
+// Stora JSON-cachar (parkeringsdata, föreskrifter) ligger i IndexedDB – localStorage
+// slår i taket vid ~5–10 MB. Gamla localStorage-poster läses en sista gång och
+// flyttas över automatiskt. Små inställningar stannar i localStorage.
+async function readJsonCache<T>(key: string): Promise<T | null> {
+  const fromIdb = await idbGet<T>(key);
+  if (fromIdb) return fromIdb;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as T;
+    void idbSet(key, parsed);
+    localStorage.removeItem(key);
+    return parsed;
+  } catch {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Cachen är valfri – ett misslyckat borttag stör inte appen.
+    }
+    return null;
+  }
+}
+
+async function writeJsonCache(key: string, value: unknown): Promise<void> {
+  if (await idbSet(key, value)) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Cachen är valfri – full lagring ska inte krascha appen.
+    }
+  }
+}
+
+async function deleteJsonCache(key: string): Promise<void> {
+  await idbDel(key);
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    // Cachen är valfri – ett misslyckat borttag stör inte appen.
   }
 }
 
@@ -679,12 +758,11 @@ function parkingIcon(place: ParkingPlace, selected: boolean) {
   const isMc = (place.mcSpaces ?? 0) > 0;
   const color = placeColor(place);
   const letter = isEv ? "E" : isDisabled ? "H" : isMc ? "M" : place.free ? "G" : place.kind === "garage" ? "G" : "P";
-  return L.divIcon({
+  // MapLibre-markör: samma HTML som förut, elementet byggs av anroparen.
+  return {
     className: "parking-marker-wrap",
     html: `<div class="parking-marker${selected ? " is-selected" : ""}" style="--marker-color:${color}"><span>${letter}</span></div>`,
-    iconSize: selected ? [42, 48] : [34, 40],
-    iconAnchor: selected ? [21, 46] : [17, 38],
-  });
+  };
 }
 
 const GENERIC_PLACE_NAMES = new Set([
@@ -704,12 +782,45 @@ function markerPriority(place: ParkingPlace) {
 }
 
 function userIcon() {
-  return L.divIcon({
+  return {
     className: "user-marker-wrap",
     html: '<div class="user-marker"><div></div></div>',
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-  });
+  };
+}
+
+// Körlägets zoom ("höjden") sparas så att den ligger kvar tills användaren ändrar den själv.
+const DRIVING_ZOOM_KEY = "parksthlm-driving-zoom";
+const DEFAULT_DRIVING_ZOOM = 17;
+
+function readDrivingZoom() {
+  const stored = Number(localStorage.getItem(DRIVING_ZOOM_KEY));
+  return Number.isFinite(stored) && stored >= 10 && stored <= 19 ? stored : DEFAULT_DRIVING_ZOOM;
+}
+
+// Bäring i grader (0 = norr, medurs) mellan två positioner. Används när GPS:en inte
+// rapporterar någon heading – då räknas riktningen fram från rörelsen i stället.
+function bearingBetween(from: LatLng, to: LatLng) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const toDeg = (value: number) => (value * 180) / Math.PI;
+  const dLng = toRad(to[1] - from[1]);
+  const lat1 = toRad(from[0]);
+  const lat2 = toRad(to[0]);
+  const y = Math.sin(dLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// Modern bilmarkör för körläget: en blå badge med vit bil i fågelperspektiv som pekar
+// uppåt, roterad med --car-heading så nosen alltid visar färdriktningen. Hela märket
+// roteras (inte bara bilen) så att även noskilen följer med.
+const DRIVING_CAR_GLYPH = `<svg class="driving-car-glyph" viewBox="0 0 32 48" aria-hidden="true"><g fill="currentColor"><rect x="6" y="3" width="20" height="42" rx="7"/><rect x="6" y="3" width="20" height="42" rx="7" fill="none" stroke="rgba(0,0,0,0.18)" stroke-width="1"/></g><g fill="#1266ee"><rect x="10" y="14" width="12" height="7" rx="2"/><rect x="10.5" y="26" width="11" height="6" rx="2"/></g><g fill="#0b3f9e" opacity="0.55"><rect x="10" y="14" width="12" height="2.4" rx="1.2"/></g></svg>`;
+
+function drivingCarIcon(heading: number) {
+  const safeHeading = Number.isFinite(heading) ? ((heading % 360) + 360) % 360 : 0;
+  return {
+    className: "driving-car-wrap",
+    html: `<div class="driving-car-marker" style="--car-heading:${safeHeading.toFixed(1)}deg"><span class="driving-car-halo"></span><span class="driving-car-nose"></span><span class="driving-car-body">${DRIVING_CAR_GLYPH}</span></div>`,
+  };
 }
 
 function formatDistance(km: number) {
@@ -726,16 +837,14 @@ const PARKED_CAR_GLYPH = `<svg class="parked-car-glyph" viewBox="0 0 24 24" fill
 // med avståndet från dig. Se .parked-car-marker i index.css – storlek och ankarpunkt
 // (nålen längst ner) hänger ihop med måtten där.
 function parkedCarIcon(distanceLabel?: string) {
-  return L.divIcon({
+  return {
     className: "parked-car-marker-wrap",
     html: `<div class="parked-car-marker">
       <span class="parked-car-glow"></span>
       <span class="parked-car-pin">${PARKED_CAR_GLYPH}</span>
       <b>MIN BIL${distanceLabel ? `<em>${distanceLabel}</em>` : ""}</b>
     </div>`,
-    iconSize: [220, 112],
-    iconAnchor: [110, 106],
-  });
+  };
 }
 
 function formatRouteDistance(meters: number) {
@@ -873,6 +982,7 @@ function parseOsmParking(payload: unknown): ParkingPlace[] {
       kind: isChargingStation ? "surface" : kind,
       tariff: null,
       free,
+      maxMinutes: parseOsmMaxstay(tags.maxstay),
       priceText: free ? "Avgiftsfri enligt OpenStreetMap" : tags.charge || (tags.fee === "yes" ? "Avgift enligt OpenStreetMap" : "Pris ej verifierat"),
       note: isDisabledSpace
         ? "Handikapparkering. Gällande regler skyltas på plats."
@@ -1227,6 +1337,29 @@ function formatOfficialTime(value: string | undefined): string | undefined {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
+// Maxtid från Trafikkontorets föreskrifter (max_minutes prioriteras, annars max_hours).
+function officialMaxMinutes(properties: Record<string, unknown>): number | undefined {
+  const minutes = Number(String(officialProperty(properties, "max_minutes") ?? "").replace(",", "."));
+  if (Number.isFinite(minutes) && minutes > 0 && minutes <= 24 * 60) return Math.round(minutes);
+  const hours = Number(String(officialProperty(properties, "max_hours") ?? "").replace(",", "."));
+  if (Number.isFinite(hours) && hours > 0 && hours <= 24) return Math.round(hours * 60);
+  return undefined;
+}
+
+// OSM maxstay skrivs som "2 hours", "90 minutes" eller "30 min".
+// Bart "m" tolkas inte (kan betyda månad) – minuter kräver minst "min".
+function parseOsmMaxstay(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const match = value.match(/([\d.,]+)\s*(minuter|minut|mins|minute|minutes|min|timmar|timme|hours|hour|hrs|hr|tim|h)/i);
+  if (!match) return undefined;
+  const amount = Number(match[1].replace(",", "."));
+  if (!Number.isFinite(amount) || amount <= 0) return undefined;
+  const unit = match[2].toLowerCase();
+  const isMinute = /^(min|mins|minute|minutes|minut|minuter)$/.test(unit);
+  const minutes = isMinute ? amount : amount * 60;
+  return minutes > 0 && minutes <= 24 * 60 ? Math.round(minutes) : undefined;
+}
+
 function officialRuleDetails(properties: Record<string, unknown>): string[] {
   const maxMinutes = officialProperty(properties, "max_minutes");
   const maxHours = officialProperty(properties, "max_hours");
@@ -1284,6 +1417,7 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
     const tariffMatch = normalize(tariff ?? "").match(/\btaxa\s*([1-5])\b/);
     const tariffId = tariffMatch ? Number(tariffMatch[1]) as TariffId : null;
     const restrictionDetails = officialRuleDetails(properties);
+    const maxMinutes = officialMaxMinutes(properties);
     const otherInfo = restrictionDetails.join(" · ") || undefined;
     const identifier = String(feature.id ?? officialProperty(properties, "id", "objectid", "feature_object_id", "fid") ?? `${lat}-${lng}-${index}`);
     // En del poster har en kod (t.ex. "7") i stället för en platsbeteckning – visa då gatunamnet.
@@ -1307,6 +1441,7 @@ function parseOfficialRuleParking(payload: unknown, rule: OfficialRule): Parking
           ? "För rörelsehindrade med tillstånd enligt Stockholms stads gällande föreskrift. Kontrollera skyltning på plats."
           : "Tillåten gatuparkering enligt Stockholms stads gällande föreskrift. Kontrollera alltid skyltning på plats."),
       serviceText,
+      maxMinutes,
       disabledSpaces: isDisabled ? 1 : undefined,
       mcSpaces: isMotorcycle ? 1 : undefined,
       source: "stockholm-open-data",
@@ -1576,18 +1711,23 @@ function addNearbyStreetAddresses(places: ParkingPlace[]): ParkingPlace[] {
 
 function App() {
   const mapNodeRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<LeafletMap | null>(null);
-  const parkingLayerRef = useRef<LayerGroup | null>(null);
-  const streetRuleLayerRef = useRef<LayerGroup | null>(null);
-  const locationLayerRef = useRef<LayerGroup | null>(null);
-  const searchMarkerLayerRef = useRef<LayerGroup | null>(null);
-  const routeLayerRef = useRef<LayerGroup | null>(null);
-  const clickLayerRef = useRef<LayerGroup | null>(null);
-  const parkedCarLayerRef = useRef<LayerGroup | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+  const mapReadyRef = useRef(false);
+  // HTML-markörer per lager – synkas mot önskat tillstånd utan att flimra.
+  const parkingMarkersRef = useRef(new Map<string, MapLibreMarker>());
+  const placeByIdRef = useRef(new Map<string, ParkingPlace>());
+  const streetPlaceByIdRef = useRef(new Map<string, ParkingPlace>());
+  const clickMarkerRef = useRef<MapLibreMarker | null>(null);
+  const searchMarkerRef = useRef<MapLibreMarker | null>(null);
+  const parkedCarMarkerRef = useRef<MapLibreMarker | null>(null);
+  const userMarkerRef = useRef<MapLibreMarker | null>(null);
   const lastGeocodeRef = useRef(0);
   const lastMcFitCountRef = useRef(0);
   const routeInfoRef = useRef<RouteInfo | null>(null);
   const lastRerouteRef = useRef(0);
+  const lastPosRef = useRef<LatLng | null>(null);
+  const headingRef = useRef(0);
+  const drivingZoomRef = useRef<number>(readDrivingZoom());
   const deferredPromptRef = useRef<BeforeInstallPromptEvent | null>(null);
   const installActionRef = useRef<HTMLButtonElement>(null);
   const loadedGlobalRulesRef = useRef(new Set<OfficialRule>());
@@ -1615,6 +1755,10 @@ function App() {
   const [limitToArea, setLimitToArea] = useState(false);
   const [viewCenter, setViewCenter] = useState<LatLng>(STOCKHOLM_CENTER);
   const [mapZoom, setMapZoom] = useState(13);
+  const [mapReady, setMapReady] = useState(false);
+  // 3D-perspektiv som Google Maps/Waze i körläge. Kan stängas av till platt 2D i Profil.
+  const [map3dEnabled, setMap3dEnabled] = useState(() => readMap3dEnabled());
+  const map3dRef = useRef(map3dEnabled);
   const [locating, setLocating] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
   const [panelOpen, setPanelOpen] = useState(true);
@@ -1634,6 +1778,11 @@ function App() {
   const [manualInstallHelp, setManualInstallHelp] = useState(false);
   const [favorites, setFavorites] = useState<ParkingPlace[]>(() => readLocalStorage(FAVORITES_STORAGE_KEY, []));
   const [favoritesOpen, setFavoritesOpen] = useState(false);
+  // P-skiva: nedräkning som överlever omladdning. Varning 10 min innan, notis när tiden går ut.
+  const [discTimer, setDiscTimer] = useState<DiscTimer | null>(() => readLocalStorage<DiscTimer | null>(DISC_TIMER_STORAGE_KEY, null));
+  const [discMinutes, setDiscMinutes] = useState(120);
+  const discWarnedRef = useRef<number | null>(null);
+  const discFiredRef = useRef<number | null>(null);
   const [parkedCar, setParkedCar] = useState<ParkedCar | null>(() => normalizeParkedCar(readLocalStorage<ParkedCar | null>(PARKED_CAR_STORAGE_KEY, null)));
   const [parkedCarOpen, setParkedCarOpen] = useState(false);
   const [parkedCarEditing, setParkedCarEditing] = useState(false);
@@ -1642,6 +1791,8 @@ function App() {
   const [vehicleProfile, setVehicleProfile] = useState<VehicleProfile>(() => readLocalStorage(VEHICLE_PROFILE_STORAGE_KEY, "car"));
   const [vehicleProfileDraft, setVehicleProfileDraft] = useState<VehicleProfile>(() => readLocalStorage(VEHICLE_PROFILE_STORAGE_KEY, "car"));
   const [vehicleProfileOpen, setVehicleProfileOpen] = useState(false);
+  const [vehicleReg, setVehicleReg] = useState(() => readLocalStorage(VEHICLE_REG_STORAGE_KEY, ""));
+  const [vehicleRegDraft, setVehicleRegDraft] = useState(() => readLocalStorage(VEHICLE_REG_STORAGE_KEY, ""));
 
   // Nya states för Dark Mode, Kartklick och Sökförslag
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem("parksthlm-dark") === "true");
@@ -1669,18 +1820,30 @@ function App() {
     else localStorage.removeItem(PARKED_CAR_STORAGE_KEY);
   }, [parkedCar]);
 
+  useEffect(() => {
+    if (discTimer) localStorage.setItem(DISC_TIMER_STORAGE_KEY, JSON.stringify(discTimer));
+    else localStorage.removeItem(DISC_TIMER_STORAGE_KEY);
+  }, [discTimer]);
+
+  // Vald P-skivetid följer platsens maxtid när ett nytt platskort öppnas.
+  useEffect(() => {
+    if (selectedParking) setDiscMinutes(selectedParking.maxMinutes ?? 120);
+  }, [selectedParking?.id]);
+
   // Klockan som nedräkningen, påminnelsen och Städnatt-filtret räknar mot.
   // Utan sparad bil tickar den glesare – då behövs bara dagsaktuella servicetider.
   useEffect(() => {
-    const intervalMs = parkedCar ? 20_000 : serviceTonightOnly ? 60_000 : 0;
+    const intervalMs = parkedCar || discTimer ? 20_000 : serviceTonightOnly ? 60_000 : 0;
     if (!intervalMs) return;
     const timer = window.setInterval(() => setClock(Date.now()), intervalMs);
     return () => window.clearInterval(timer);
-  }, [parkedCar, serviceTonightOnly]);
+  }, [parkedCar, discTimer, serviceTonightOnly]);
 
   // Poster från äldre tolkningar av föreskriftsdatan läses aldrig mer men tar lagring –
-  // rensa dem en gång per start i stället för att låta dem ligga kvar.
+  // rensa dem en gång per start i stället för att låta dem ligga kvar. Detsamma gäller
+  // IndexedDB-lagrets formatversion (stora JSON-cachar bor där, inte i localStorage).
   useEffect(() => {
+    void ensureIdbVersion();
     const prefix = "parksthlm-stockholm-open-data-";
     for (const key of Object.keys(localStorage)) {
       if (!key.startsWith(prefix)) continue;
@@ -1813,18 +1976,11 @@ function App() {
     if (!navigator.onLine) return 0;
     if (loadedGlobalOsmRef.current.has(dataset)) return 0;
     const cacheKey = `parksthlm-osm-${dataset}-stockholm-v2`;
-    const cachedRaw = localStorage.getItem(cacheKey);
-    if (cachedRaw) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[] };
-        if (Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
-          setAllParking((previous) => mergePlacesById(previous, cached.places));
-          loadedGlobalOsmRef.current.add(dataset);
-          return cached.places.length;
-        }
-      } catch {
-        localStorage.removeItem(cacheKey);
-      }
+    const cached = await readJsonCache<{ timestamp: number; places: ParkingPlace[] }>(cacheKey);
+    if (cached && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+      setAllParking((previous) => mergePlacesById(previous, cached.places));
+      loadedGlobalOsmRef.current.add(dataset);
+      return cached.places.length;
     }
 
     const query = dataset === "garage"
@@ -1847,25 +2003,21 @@ function App() {
       : place.free);
     setAllParking((previous) => mergePlacesById(previous, places));
     loadedGlobalOsmRef.current.add(dataset);
-    try {
-      localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), places }));
-    } catch {
-      localStorage.removeItem(cacheKey);
-    }
+    void writeJsonCache(cacheKey, { timestamp: Date.now(), places });
     return places.length;
   }, []);
 
   const fetchApiParking = useCallback(async (force = false) => {
     const CACHE_KEY = "parksthlm-api-v4";
-    const cachedRaw = localStorage.getItem(CACHE_KEY);
-    if (cachedRaw && !force) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version !== 4) throw new Error("cache-version");
-        if (Array.isArray(cached.places)) setAllParking((prev) => replaceSource(prev, "api", cached.places));
-        if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
-      } catch {
-        localStorage.removeItem(CACHE_KEY);
+    if (!force) {
+      const cached = await readJsonCache<{ timestamp: number; places: ParkingPlace[]; version?: number }>(CACHE_KEY);
+      if (cached) {
+        if (cached.version !== 4) {
+          void deleteJsonCache(CACHE_KEY);
+        } else {
+          if (Array.isArray(cached.places)) setAllParking((prev) => replaceSource(prev, "api", cached.places));
+          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000 || !navigator.onLine) return;
+        }
       }
     }
     if (!navigator.onLine) return;
@@ -1873,11 +2025,7 @@ function App() {
       const payload = await fetchJsonWithBundledFallback("/api/stockholm-parking", "stockholm-parking.json");
       const places = parseApiParking(payload);
       setAllParking((prev) => replaceSource(prev, "api", places));
-      try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), version: 4, places }));
-      } catch {
-        localStorage.removeItem(CACHE_KEY);
-      }
+      void writeJsonCache(CACHE_KEY, { timestamp: Date.now(), version: 4, places });
       if (force) showNotice(places.length + " infartsparkeringar uppdaterades");
     } catch {
       if (force) showNotice("Infartsparkeringar kunde inte nås. Sparad data används.");
@@ -1890,17 +2038,10 @@ function App() {
     const scopeKey = `${scope.center[0].toFixed(3)}-${scope.center[1].toFixed(3)}-${radiusMeters}`;
     const results = await Promise.all(rules.map(async (rule): Promise<ParkingPlace[]> => {
       const cacheKey = `parksthlm-stockholm-open-data-${rule}-${scopeKey}`;
-      const cachedRaw = localStorage.getItem(cacheKey);
-      if (cachedRaw) {
-        try {
-          const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-          // Versionen höjs när tolkningen av föreskrifterna ändras, så att gamla cachade poster rensas.
-          if (cached.version === OFFICIAL_DATA_CACHE_VERSION && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
-            return cached.places;
-          }
-        } catch {
-          localStorage.removeItem(cacheKey);
-        }
+      const cached = await readJsonCache<{ timestamp: number; places: ParkingPlace[]; version?: number }>(cacheKey);
+      // Versionen höjs när tolkningen av föreskrifterna ändras, så att gamla cachade poster rensas.
+      if (cached?.version === OFFICIAL_DATA_CACHE_VERSION && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+        return cached.places;
       }
       try {
         const params = new URLSearchParams({
@@ -1913,7 +2054,7 @@ function App() {
           `${rule}.json`,
         );
         const places = parseOfficialRuleParking(payload, rule).filter((place) => isWithinArea(place, scope));
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), version: OFFICIAL_DATA_CACHE_VERSION, places }));
+        void writeJsonCache(cacheKey, { timestamp: Date.now(), version: OFFICIAL_DATA_CACHE_VERSION, places });
         return places;
       } catch {
         return [];
@@ -1927,18 +2068,11 @@ function App() {
     if (missingRules.length === 0) return rules.reduce((sum, rule) => sum + (globalRuleCountsRef.current.get(rule) ?? 0), 0);
     const results = await Promise.all(missingRules.map(async (rule) => {
       const cacheKey = `parksthlm-stockholm-open-data-${rule}-all-v${OFFICIAL_DATA_CACHE_VERSION}`;
-      const cachedRaw = localStorage.getItem(cacheKey);
-      if (cachedRaw) {
-        try {
-          const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[] };
-          if (Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
-            loadedGlobalRulesRef.current.add(rule);
-            globalRuleCountsRef.current.set(rule, cached.places.length);
-            return cached.places;
-          }
-        } catch {
-          localStorage.removeItem(cacheKey);
-        }
+      const cached = await readJsonCache<{ timestamp: number; places: ParkingPlace[] }>(cacheKey);
+      if (cached && Array.isArray(cached.places) && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+        loadedGlobalRulesRef.current.add(rule);
+        globalRuleCountsRef.current.set(rule, cached.places.length);
+        return cached.places;
       }
 
       const payload = await fetchJsonWithBundledFallback(
@@ -1948,11 +2082,7 @@ function App() {
       const places = parseOfficialRuleParking(payload, rule);
       loadedGlobalRulesRef.current.add(rule);
       globalRuleCountsRef.current.set(rule, places.length);
-      try {
-        localStorage.setItem(cacheKey, JSON.stringify({ timestamp: Date.now(), places }));
-      } catch {
-        localStorage.removeItem(cacheKey);
-      }
+      void writeJsonCache(cacheKey, { timestamp: Date.now(), places });
       return places;
     }));
     const places = results.flat();
@@ -1963,15 +2093,10 @@ function App() {
   const fetchEvCharging = useCallback(async () => {
     if (!navigator.onLine) return;
     const key = "parksthlm-ev-v3";
-    const cachedRaw = localStorage.getItem(key);
-    if (cachedRaw) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 2 && Array.isArray(cached.places)) {
-          setAllParking((prev) => replaceSource(prev, "osm-ev", cached.places));
-          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
-        }
-      } catch { localStorage.removeItem(key); }
+    const cached = await readJsonCache<{ timestamp: number; places: ParkingPlace[]; version?: number }>(key);
+    if (cached?.version === 2 && Array.isArray(cached.places)) {
+      setAllParking((prev) => replaceSource(prev, "osm-ev", cached.places));
+      if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
     }
     try {
       const q = `[out:json][timeout:120];nwr["amenity"="charging_station"](${STOCKHOLM_DATA_BBOX});out center tags;`;
@@ -1979,11 +2104,7 @@ function App() {
       const places = parseOsmParking(payload)
         .filter((place) => (place.evSpaces ?? 0) > 0)
         .map((place): ParkingPlace => ({ ...place, source: "osm-ev" }));
-      try {
-        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
-      } catch {
-        localStorage.removeItem(key);
-      }
+      void writeJsonCache(key, { timestamp: Date.now(), version: 2, places });
       setAllParking((prev) => replaceSource(prev, "osm-ev", places));
     } catch { /* silent */ }
   }, []);
@@ -1991,25 +2112,20 @@ function App() {
   const fetchOcmCharging = useCallback(async () => {
     if (!navigator.onLine) return;
     const key = "parksthlm-ocm-v2";
-    const cachedRaw = localStorage.getItem(key);
+    const cached = await readJsonCache<{ timestamp: number; places: ParkingPlace[]; version?: number }>(key);
     let ocmPlaces: ParkingPlace[] | null = null;
-    if (cachedRaw) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 3 && Array.isArray(cached.places)) {
-          ocmPlaces = cached.places;
-          setAllParking((prev) => {
-            const injected = prev.map((p) => {
-              if ((p.evSpaces ?? 0) === 0 || (p.evConnections ?? []).length > 0) return p;
-              const match = ocmPlaces!.find((o) => (o.evConnections ?? []).length > 0 && distanceKm([p.lat, p.lng], [o.lat, o.lng]) < 0.05);
-              return match ? { ...p, evConnections: match.evConnections } : p;
-            });
-            const ocmIds = new Set(prev.map((p) => p.id));
-            return [...injected, ...ocmPlaces!.filter((o) => !ocmIds.has(o.id))];
-          });
-          if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
-        }
-      } catch { localStorage.removeItem(key); }
+    if (cached?.version === 3 && Array.isArray(cached.places)) {
+      ocmPlaces = cached.places;
+      setAllParking((prev) => {
+        const injected = prev.map((p) => {
+          if ((p.evSpaces ?? 0) === 0 || (p.evConnections ?? []).length > 0) return p;
+          const match = ocmPlaces!.find((o) => (o.evConnections ?? []).length > 0 && distanceKm([p.lat, p.lng], [o.lat, o.lng]) < 0.05);
+          return match ? { ...p, evConnections: match.evConnections } : p;
+        });
+        const ocmIds = new Set(prev.map((p) => p.id));
+        return [...injected, ...ocmPlaces!.filter((o) => !ocmIds.has(o.id))];
+      });
+      if (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) return;
     }
     try {
       const payload = await fetchJsonWithBundledFallback("/api/open-charge-map", "open-charge-map.json");
@@ -2023,39 +2139,24 @@ function App() {
         const ocmIds = new Set(prev.map((p) => p.id));
         return [...injected, ...ocmPlaces!.filter((o) => !ocmIds.has(o.id))];
       });
-      try {
-        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 3, places: ocmPlaces }));
-      } catch {
-        localStorage.removeItem(key);
-      }
+      void writeJsonCache(key, { timestamp: Date.now(), version: 3, places: ocmPlaces });
     } catch { /* silent */ }
   }, []);
 
   const fetchNobilCharging = useCallback(async () => {
     if (!navigator.onLine) return;
     const key = "parksthlm-nobil-v2";
-    const cachedRaw = localStorage.getItem(key);
-    if (cachedRaw) {
-      try {
-        const cached = JSON.parse(cachedRaw) as { timestamp: number; places: ParkingPlace[]; version?: number };
-        if (cached.version === 2 && Array.isArray(cached.places)) {
-          setAllParking((prev) => replaceSource(prev, "nobil", cached.places));
-          if (Date.now() - cached.timestamp < 60 * 60 * 1000) return;
-        }
-      } catch {
-        localStorage.removeItem(key);
-      }
+    const cached = await readJsonCache<{ timestamp: number; places: ParkingPlace[]; version?: number }>(key);
+    if (cached?.version === 2 && Array.isArray(cached.places)) {
+      setAllParking((prev) => replaceSource(prev, "nobil", cached.places));
+      if (Date.now() - cached.timestamp < 60 * 60 * 1000) return;
     }
 
     try {
       const payload = await fetchJsonWithBundledFallback("/api/nobil", "nobil.json", { method: "POST" });
       const places = parseNobilParking(payload);
       setAllParking((prev) => replaceSource(prev, "nobil", places));
-      try {
-        localStorage.setItem(key, JSON.stringify({ timestamp: Date.now(), version: 2, places }));
-      } catch {
-        localStorage.removeItem(key);
-      }
+      void writeJsonCache(key, { timestamp: Date.now(), version: 2, places });
     } catch {
       // Cached NOBIL data is retained if the provider cannot be reached.
     }
@@ -2151,77 +2252,81 @@ function App() {
 
   useEffect(() => {
     if (!mapNodeRef.current || mapRef.current) return;
+    let cancelled = false;
 
-    const map = L.map(mapNodeRef.current, {
-      center: STOCKHOLM_CENTER,
+    const map = new MapLibreMap({
+      container: mapNodeRef.current,
+      style: OSM_RASTER_STYLE,
+      center: toLngLat(STOCKHOLM_CENTER),
       zoom: 13,
-      zoomControl: false,
-      attributionControl: false,
-      preferCanvas: true,
       minZoom: 10,
       maxZoom: 19,
+      maxPitch: 60,
+      pitch: 0,
+      bearing: 0,
+      attributionControl: { compact: true },
+      fadeDuration: 0,
     });
     mapRef.current = map;
+    applyMap3dInteractions(map, map3dRef.current);
 
-    map.createPane("offlineBase");
-    map.getPane("offlineBase")!.style.zIndex = "180";
-    map.createPane("taxAreas");
-    map.getPane("taxAreas")!.style.zIndex = "310";
-    map.createPane("parking");
-    map.getPane("parking")!.style.zIndex = "480";
-    map.createPane("parkedCar");
-    map.getPane("parkedCar")!.style.zIndex = "680";
-    map.createPane("charging");
-    map.getPane("charging")!.style.zIndex = "470";
-    map.createPane("officialStreetRules");
-    map.getPane("officialStreetRules")!.style.zIndex = "420";
-    map.createPane("route");
-    map.getPane("route")!.style.zIndex = "450";
+    map.on("load", () => {
+      if (cancelled) return;
+      // Basvägar som syns även offline under de cachade kartrutorna.
+      const baseFeatures: GeoFeature[] = OFFLINE_BASE_ROADS.map((positions) => ({
+        type: "Feature",
+        properties: {},
+        geometry: { type: "LineString", coordinates: positions.map(toLngLat) },
+      }));
+      map.addSource("offline-base", { type: "geojson", data: { type: "FeatureCollection", features: baseFeatures } });
+      map.addLayer({ id: "offline-base-wide", type: "line", source: "offline-base", paint: { "line-color": "#c7d0d1", "line-width": 5, "line-opacity": 0.55 } });
+      map.addLayer({ id: "offline-base-inner", type: "line", source: "offline-base", paint: { "line-color": "#f8faf9", "line-width": 2, "line-opacity": 0.95 } });
 
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      crossOrigin: true,
-      attribution: "&copy; OpenStreetMap-bidragsgivare",
-      className: "base-map-tiles",
-    }).addTo(map);
-    L.control.attribution({ prefix: false, position: "bottomright" })
-      .addAttribution('&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>')
-      .addTo(map);
+      // Taxeområdena ritas som rena bakgrundslager. Polygontäcken ligger ovanpå nästan hela
+      // innerstaden, så om de fångade klick gick det inte att sätta den röda kartmarkören där.
+      // Reglerna för ett område nås i stället via taxemärket i kortet för vald kartposition.
+      const taxFeatures: GeoFeature[] = [...TAX_AREAS].sort((a, b) => b.tariff - a.tariff).map((area) => ({
+        type: "Feature",
+        properties: { color: TARIFFS[area.tariff].color },
+        geometry: {
+          type: "Polygon",
+          coordinates: [[...area.positions.map(toLngLat), toLngLat(area.positions[0])]],
+        },
+      }));
+      map.addSource("tax-areas", { type: "geojson", data: { type: "FeatureCollection", features: taxFeatures } });
+      map.addLayer({ id: "tax-fill", type: "fill", source: "tax-areas", paint: { "fill-color": ["get", "color"], "fill-opacity": 0.24 } });
+      map.addLayer({ id: "tax-line", type: "line", source: "tax-areas", paint: { "line-color": ["get", "color"], "line-width": 1.8, "line-opacity": 0.88 } });
 
-    const offlineBase = L.layerGroup().addTo(map);
-    OFFLINE_BASE_ROADS.forEach((positions) => {
-      L.polyline(positions, { pane: "offlineBase", color: "#c7d0d1", weight: 5, opacity: 0.55 }).addTo(offlineBase);
-      L.polyline(positions, { pane: "offlineBase", color: "#f8faf9", weight: 2, opacity: 0.95 }).addTo(offlineBase);
+      // Föreskriftslinjer (gatusträckor) – datan fylls på av effekten nedan.
+      map.addSource("street-rules", { type: "geojson", data: emptyFeatureCollection() });
+      map.addLayer({ id: "street-casing", type: "line", source: "street-rules", paint: { "line-color": "#ffffff", "line-width": ["case", [">", ["get", "wide"], 0], 8, 7], "line-opacity": 0.9 } });
+      map.addLayer({ id: "street-main", type: "line", source: "street-rules", paint: { "line-color": ["get", "color"], "line-width": ["case", [">", ["get", "wide"], 0], 4.8, 3.6], "line-opacity": 0.92 } });
+
+      // GPS-noggrannhet som fylld cirkel runt positionen.
+      map.addSource("accuracy", { type: "geojson", data: emptyFeatureCollection() });
+      map.addLayer({ id: "accuracy-fill", type: "fill", source: "accuracy", paint: { "fill-color": "#3478f6", "fill-opacity": 0.08 } });
+
+      // Rutten ritas ovanpå allt annat kartinnehåll.
+      map.addSource("route", { type: "geojson", data: emptyFeatureCollection() });
+      map.addLayer({ id: "route-casing", type: "line", source: "route", paint: { "line-color": "#ffffff", "line-width": 10, "line-opacity": 0.92 } });
+      map.addLayer({ id: "route-line", type: "line", source: "route", paint: { "line-color": "#1266ee", "line-width": 6, "line-opacity": 1 } });
+
+      mapReadyRef.current = true;
+      setMapReady(true);
     });
 
-    // Taxeområdena ritas som rena bakgrundslager. Polygontäcken ligger ovanpå nästan hela
-    // innerstaden, så om de fångade klick gick det inte att sätta den röda kartmarkören där.
-    // Reglerna för ett område nås i stället via taxemärket i kortet för vald kartposition.
-    const taxAreas = L.layerGroup().addTo(map);
-    [...TAX_AREAS].sort((a, b) => b.tariff - a.tariff).forEach((area) => {
-      const color = TARIFFS[area.tariff].color;
-      L.polygon(area.positions, {
-        pane: "taxAreas",
-        color,
-        fillColor: color,
-        weight: 1.8,
-        opacity: 0.88,
-        fillOpacity: 0.24,
-        interactive: false,
-      }).addTo(taxAreas);
+    // Klick på en föreskriftslinje öppnar platsen – linjerna ligger över taxepolygonerna.
+    map.on("click", "street-main", (event) => {
+      const id = (event.features?.[0]?.properties as { id?: string } | undefined)?.id;
+      const place = id ? streetPlaceByIdRef.current.get(id) : undefined;
+      if (!place) return;
+      setSelectedZone(null);
+      setClickedPosition(null);
+      setSelectedParking(place);
     });
-
-    parkingLayerRef.current = L.layerGroup().addTo(map);
-    streetRuleLayerRef.current = L.layerGroup().addTo(map);
-    locationLayerRef.current = L.layerGroup().addTo(map);
-    searchMarkerLayerRef.current = L.layerGroup().addTo(map);
-    routeLayerRef.current = L.layerGroup().addTo(map);
-    clickLayerRef.current = L.layerGroup().addTo(map);
-    parkedCarLayerRef.current = L.layerGroup().addTo(map);
 
     map.on("click", (event) => {
-      const latlng = event.latlng;
-      const pos: LatLng = [latlng.lat, latlng.lng];
+      const pos: LatLng = toLatLng(event.lngLat);
       
       setSelectedZone(null);
       setSelectedParking(null);
@@ -2231,7 +2336,7 @@ function App() {
       
       if (window.navigator.onLine) {
         setClickedLoading(true);
-        fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latlng.lat}&lon=${latlng.lng}&format=jsonv2&zoom=18&accept-language=sv`)
+        fetch(`https://nominatim.openstreetmap.org/reverse?lat=${pos[0]}&lon=${pos[1]}&format=jsonv2&zoom=18&accept-language=sv`)
           .then((res) => {
             if (!res.ok) throw new Error("reverse-geocoding-failed");
             return res.json();
@@ -2253,76 +2358,106 @@ function App() {
     });
 
     map.on("moveend", () => {
-      const center = map.getCenter();
-      setViewCenter([center.lat, center.lng]);
+      setViewCenter(toLatLng(map.getCenter()));
       setMapZoom(map.getZoom());
     });
 
-    window.setTimeout(() => map.invalidateSize(), 100);
+    // Körlägets zoom ("höjden") ska ligga kvar tills användaren ändrar den själv –
+    // spara den så att nästa körning startar på samma höjd.
+    map.on("zoomend", () => {
+      if (routeInfoRef.current?.tracking) {
+        const zoom = map.getZoom();
+        drivingZoomRef.current = zoom;
+        try {
+          localStorage.setItem(DRIVING_ZOOM_KEY, String(zoom));
+        } catch {
+          /* lagring saknas – kör vidare utan att spara */
+        }
+      }
+    });
+
+    window.setTimeout(() => map.resize(), 100);
     return () => {
+      cancelled = true;
       map.remove();
       mapRef.current = null;
-      parkingLayerRef.current = null;
-      streetRuleLayerRef.current = null;
-      locationLayerRef.current = null;
-      searchMarkerLayerRef.current = null;
-      routeLayerRef.current = null;
-      clickLayerRef.current = null;
-      parkedCarLayerRef.current = null;
+      mapReadyRef.current = false;
+      removeAllMarkers(parkingMarkersRef.current);
+      clickMarkerRef.current?.remove();
+      clickMarkerRef.current = null;
+      searchMarkerRef.current?.remove();
+      searchMarkerRef.current = null;
+      parkedCarMarkerRef.current?.remove();
+      parkedCarMarkerRef.current = null;
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = null;
+      setMapReady(false);
     };
   }, []);
 
+  // 2D/3D-läge: slå på/av rotation och lutning med gester. Stängs 3D av rätas
+  // kartan upp direkt – nästa GPS-uppdatering i körläge håller den sedan platt.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    map3dRef.current = map3dEnabled;
+    applyMap3dInteractions(map, map3dEnabled);
+    if (!map3dEnabled) map.easeTo({ pitch: 0, bearing: 0, duration: 300 });
+  }, [map3dEnabled, mapReady]);
+
+  const setMap3d = (enabled: boolean) => {
+    setMap3dEnabled(enabled);
+    writeMap3dEnabled(enabled);
+    showNotice(enabled ? "3D-karta på – körläget lutas som Google Maps" : "2D-karta på – platt karta norr-upp");
+  };
+
   // Hantera klickad markör på kartan reaktivt
   useEffect(() => {
-    const layer = clickLayerRef.current;
-    if (!layer) return;
-    layer.clearLayers();
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    clickMarkerRef.current?.remove();
+    clickMarkerRef.current = null;
     if (clickedPosition) {
-      const icon = L.divIcon({
-        className: "click-marker-wrap",
-        html: '<div class="click-marker"></div>',
-        iconSize: [28, 28],
-        iconAnchor: [14, 28],
-      });
-      L.marker(clickedPosition, { pane: "parking", icon }).addTo(layer);
+      const element = makeMarkerElement("click-marker-wrap", '<div class="click-marker"></div>');
+      clickMarkerRef.current = new MapLibreMarker({ element, anchor: "bottom" })
+        .setLngLat(toLngLat(clickedPosition))
+        .addTo(map);
     }
-  }, [clickedPosition]);
+  }, [clickedPosition, mapReady]);
 
   useEffect(() => {
-    const layer = searchMarkerLayerRef.current;
-    if (!layer) return;
-    layer.clearLayers();
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    searchMarkerRef.current?.remove();
+    searchMarkerRef.current = null;
     if (!searchPosition) return;
-    const icon = L.divIcon({
-      className: "search-marker-wrap",
-      html: '<div class="search-marker" aria-label="Sökt adress"></div>',
-      iconSize: [34, 44],
-      iconAnchor: [17, 42],
-    });
-    L.marker(searchPosition, { pane: "parking", icon, title: "Sökt adress" }).addTo(layer);
-  }, [searchPosition]);
+    const element = makeMarkerElement("search-marker-wrap", '<div class="search-marker" aria-label="Sökt adress"></div>');
+    searchMarkerRef.current = new MapLibreMarker({ element, anchor: "bottom" })
+      .setLngLat(toLngLat(searchPosition))
+      .addTo(map);
+  }, [searchPosition, mapReady]);
 
   useEffect(() => {
-    const layer = parkedCarLayerRef.current;
-    if (!layer) return;
-    layer.clearLayers();
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    parkedCarMarkerRef.current?.remove();
+    parkedCarMarkerRef.current = null;
     if (!parkedCar) return;
     // Avståndet står på markören bara när vi vet var användaren är – annars vore det en gissning.
     const distanceLabel = userPosition
       ? formatDistance(distanceKm(userPosition, [parkedCar.lat, parkedCar.lng]))
       : undefined;
-    L.marker([parkedCar.lat, parkedCar.lng], {
-      pane: "parkedCar",
-      icon: parkedCarIcon(distanceLabel),
-      keyboard: true,
-      title: "Min parkerade bil",
-    })
-      .on("click", (event) => {
-        L.DomEvent.stopPropagation(event);
-        setParkedCarOpen(true);
-      })
-      .addTo(layer);
-  }, [parkedCar, userPosition]);
+    const { className, html } = parkedCarIcon(distanceLabel);
+    const element = makeMarkerElement(className, html);
+    element.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setParkedCarOpen(true);
+    });
+    // Nålen längst ner på markören (se .parked-car-marker) ska peka på bilen.
+    parkedCarMarkerRef.current = new MapLibreMarker({ element, anchor: "bottom", offset: [0, 6] })
+      .setLngLat(toLngLat([parkedCar.lat, parkedCar.lng]))
+      .addTo(map);
+  }, [parkedCar, userPosition, mapReady]);
 
   const matchesCategory = useCallback((place: ParkingPlace) => {
     if (category === "all") return true;
@@ -2498,14 +2633,20 @@ function App() {
   const loadCurrentMapView = useCallback(async () => {
     const map = mapRef.current;
     if (!map) return;
-    const center = map.getCenter();
-    const bounds = map.getBounds();
+    const center = toLatLng(map.getCenter());
+    const mapBounds = map.getBounds();
+    const bounds = {
+      north: mapBounds.getNorth(),
+      south: mapBounds.getSouth(),
+      east: mapBounds.getEast(),
+      west: mapBounds.getWest(),
+    };
     // Kartvyn kan vara större än vad datakällorna klarar. Vi hämtar då den största
     // tillåtna radien i stället för att neka – knappen ska alltid göra något.
-    const visibleRadiusKm = distanceKm([center.lat, center.lng], [bounds.getNorth(), bounds.getEast()]);
+    const visibleRadiusKm = distanceKm(center, [bounds.north, bounds.east]);
     const clampedToMaxRadius = visibleRadiusKm > MAX_AREA_RADIUS_KM;
     const scope: AreaScope = {
-      center: [center.lat, center.lng],
+      center,
       label: clampedToMaxRadius ? `kartans mitt (max ${MAX_AREA_RADIUS_KM} km)` : "aktuell kartvy",
       radiusKm: Math.min(MAX_AREA_RADIUS_KM, Math.max(AREA_SEARCH_RADIUS_KM, visibleRadiusKm)),
     };
@@ -2547,10 +2688,9 @@ function App() {
     if (!map || motorcyclePlaces.length < 2 || motorcyclePlaces.length <= lastMcFitCountRef.current) return;
 
     lastMcFitCountRef.current = motorcyclePlaces.length;
-    map.fitBounds(L.latLngBounds(motorcyclePlaces.map((place) => [place.lat, place.lng])), {
-      padding: [52, 52],
+    map.fitBounds(boundsOf(motorcyclePlaces.map((place) => [place.lat, place.lng] as LatLng)), {
+      padding: 52,
       maxZoom: 11,
-      animate: true,
     });
   }, [category, filteredParking]);
 
@@ -2566,48 +2706,43 @@ function App() {
   }, [filteredParking, focusPosition, query]);
 
   useEffect(() => {
-    const layer = streetRuleLayerRef.current;
-    if (!layer) return;
-    layer.clearLayers();
-    if (!areaScope || !limitToArea) return;
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const source = map.getSource("street-rules") as unknown as { setData: (data: GeoFeatureCollection) => void } | undefined;
+    if (!source) return;
+    if (!areaScope || !limitToArea) {
+      streetPlaceByIdRef.current = new Map();
+      source.setData(emptyFeatureCollection());
+      return;
+    }
 
-    filteredParking
-      .filter((place) => place.source === "stockholm-open-data" && (place.positions?.length ?? 0) >= 2)
-      .forEach((place) => {
-        const color = placeColor(place);
-        L.polyline(place.positions!, {
-          pane: "officialStreetRules",
-          color: "#ffffff",
-          weight: (place.disabledSpaces ?? 0) > 0 ? 8 : 7,
-          opacity: 0.9,
-          interactive: false,
-        }).addTo(layer);
-        L.polyline(place.positions!, {
-          pane: "officialStreetRules",
-          color,
-          weight: (place.disabledSpaces ?? 0) > 0 ? 4.8 : 3.6,
-          opacity: 0.92,
-          interactive: true,
-        })
-          .bindTooltip(`${place.address} · ${placeTariffLabel(place)}`, { sticky: true, className: "street-tooltip" })
-          .on("click", (event) => {
-            L.DomEvent.stopPropagation(event);
-            setSelectedZone(null);
-            setClickedPosition(null);
-            setSelectedParking(place);
-          })
-          .addTo(layer);
-      });
-  }, [areaScope, filteredParking, limitToArea]);
+    const matches = filteredParking.filter((place) => place.source === "stockholm-open-data" && (place.positions?.length ?? 0) >= 2);
+    streetPlaceByIdRef.current = new Map(matches.map((place) => [place.id, place]));
+    // Klick på linjen öppnar platsen direkt (hanteras i kartinitieringen) –
+    // hover-texterna från Leaflet är borttagna, all info finns i kortet.
+    const features: GeoFeature[] = matches.map((place) => ({
+      type: "Feature",
+      properties: { id: place.id, color: placeColor(place), wide: (place.disabledSpaces ?? 0) > 0 ? 1 : 0 },
+      geometry: { type: "LineString", coordinates: place.positions!.map(toLngLat) },
+    }));
+    source.setData({ type: "FeatureCollection", features });
+  }, [areaScope, filteredParking, limitToArea, mapReady]);
 
   useEffect(() => {
-    const layer = parkingLayerRef.current;
-    if (!layer) return;
-    layer.clearLayers();
-    const visibleBounds = mapRef.current?.getBounds().pad(0.12);
-    const placesInView = visibleBounds
-      ? filteredParking.filter((place) => visibleBounds.contains([place.lat, place.lng]))
-      : filteredParking;
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const bounds = map.getBounds();
+    const southWest = bounds.getSouthWest();
+    const northEast = bounds.getNorthEast();
+    const latPad = (northEast.lat - southWest.lat) * 0.12;
+    const lngPad = (northEast.lng - southWest.lng) * 0.12;
+    const south = southWest.lat - latPad;
+    const north = northEast.lat + latPad;
+    const west = southWest.lng - lngPad;
+    const east = northEast.lng + lngPad;
+    const placesInView = filteredParking.filter(
+      (place) => place.lat >= south && place.lat <= north && place.lng >= west && place.lng <= east,
+    );
     // När kartan är utzoomad och inget filter är valt visas bara namngivna platser,
     // garage och den lokala listan – annars dränks kartan av anonyma gatuparkeringsrader.
     // Väljer användaren ett filter (t.ex. handikapp) visas alltid hela urvalet.
@@ -2638,23 +2773,29 @@ function App() {
         })
         .slice(0, MAX_VISIBLE_MARKERS);
     }
-    markerPlaces.forEach((place) => {
-      L.marker([place.lat, place.lng], {
-        pane: (place.evSpaces ?? 0) > 0 && (place.disabledSpaces ?? 0) === 0 && (place.mcSpaces ?? 0) === 0 ? "charging" : "parking",
-        icon: parkingIcon(place, selectedParking?.id === place.id),
-        keyboard: true,
-        title: place.name,
-      })
-        .on("click", (event) => {
-          L.DomEvent.stopPropagation(event);
-          setSelectedZone(null);
-          setClickedPosition(null);
-          setSearchFocused(false);
-          setSelectedParking(place);
-        })
-        .addTo(layer);
-    });
-  }, [category, filteredParking, mapZoom, selectedParking, serviceTonightByPlace, serviceTonightOnly, viewCenter]);
+    placeByIdRef.current = new Map(markerPlaces.map((place) => [place.id, place]));
+    syncMarkers(parkingMarkersRef.current, map, (id) => {
+      const place = placeByIdRef.current.get(id);
+      if (!place) return null;
+      const { className, html } = parkingIcon(place, selectedParking?.id === id);
+      const element = makeMarkerElement(className, html);
+      element.title = place.name;
+      element.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const current = placeByIdRef.current.get(id);
+        if (!current) return;
+        setSelectedZone(null);
+        setClickedPosition(null);
+        setSearchFocused(false);
+        setSelectedParking(current);
+      });
+      return { element, lngLat: toLngLat([place.lat, place.lng]), anchor: "bottom" };
+    }, markerPlaces.map((place) => place.id));
+    // Vald markör växer – uppdatera markeringen utan att bygga om alla markörer.
+    for (const [id, marker] of parkingMarkersRef.current) {
+      marker.getElement().firstElementChild?.classList.toggle("is-selected", selectedParking?.id === id);
+    }
+  }, [category, filteredParking, mapZoom, selectedParking, serviceTonightByPlace, serviceTonightOnly, viewCenter, mapReady]);
 
   const selectCategory = (next: Category, fit = false) => {
     setCategory(next);
@@ -2676,7 +2817,7 @@ function App() {
     }
     if (fit && typeof next === "number" && mapRef.current) {
       const points = TAX_AREAS.filter((area) => area.tariff === next).flatMap((area) => area.positions);
-      if (points.length) mapRef.current.fitBounds(L.latLngBounds(points), { padding: [70, 70], maxZoom: 13 });
+      if (points.length) mapRef.current.fitBounds(boundsOf(points), { padding: 70, maxZoom: 13 });
     }
   };
 
@@ -2733,7 +2874,7 @@ function App() {
 
     if (searchMatches.length > 0) {
       const closest = searchMatches[0].place;
-      mapRef.current?.flyTo([closest.lat, closest.lng], 16, { duration: 1.15 });
+      mapRef.current?.flyTo({ center: toLngLat([closest.lat, closest.lng]), zoom: 16, duration: 1150 });
       setSelectedParking(closest);
       return;
     }
@@ -2812,7 +2953,7 @@ function App() {
     setSearchFocused(false);
     setQuery("");
     setSearchLocations([]);
-    mapRef.current?.flyTo(position, 16, { duration: 1.2 });
+    mapRef.current?.flyTo({ center: toLngLat(position), zoom: 16, duration: 1200 });
     setAreaLoading(true);
     try {
       await Promise.all([
@@ -2828,23 +2969,70 @@ function App() {
     }
   };
 
-  const updateUserLocation = useCallback((next: LatLng, accuracy: number, followRoute = false) => {
+  const updateUserLocation = useCallback((next: LatLng, accuracy: number, followRoute = false, gpsHeading?: number | null) => {
     setUserPosition(next);
     setSearchPosition(null);
-    const layer = locationLayerRef.current;
-    layer?.clearLayers();
-    if (layer) {
-      L.circle(next, {
-        pane: "parking",
-        radius: Math.min(accuracy, 220),
-        color: "#3478f6",
-        fillColor: "#3478f6",
-        fillOpacity: 0.08,
-        weight: 1,
-      }).addTo(layer);
-      L.marker(next, { pane: "parking", icon: userIcon(), title: "Din position" }).addTo(layer);
+    // Riktning: GPS-heading i första hand, annars bäring från förra punkten när bilen
+    // rört sig, annars bäring mot nästa ruttpunkt. Behåll senaste riktningen vid stillastående.
+    if (followRoute) {
+      let heading = headingRef.current;
+      const movedFromLast = lastPosRef.current ? distanceKm(lastPosRef.current, next) * 1000 : Number.POSITIVE_INFINITY;
+      if (gpsHeading != null && Number.isFinite(gpsHeading) && (movedFromLast > 5 || lastPosRef.current == null)) {
+        heading = ((gpsHeading % 360) + 360) % 360;
+      } else if (lastPosRef.current) {
+        const movedMeters = distanceKm(lastPosRef.current, next) * 1000;
+        if (movedMeters > 6) heading = bearingBetween(lastPosRef.current, next);
+        else {
+          const activeRoute = routeInfoRef.current;
+          if (activeRoute?.positions?.length) {
+            const { nearestMeters } = routeProgress(next, activeRoute.positions);
+            if (nearestMeters < 200) {
+              let nearestIndex = 0;
+              let best = Number.POSITIVE_INFINITY;
+              activeRoute.positions.forEach((routePosition, index) => {
+                const meters = distanceKm(next, routePosition) * 1000;
+                if (meters < best) {
+                  best = meters;
+                  nearestIndex = index;
+                }
+              });
+              const ahead = activeRoute.positions[Math.min(nearestIndex + 2, activeRoute.positions.length - 1)];
+              if (ahead && distanceKm(next, ahead) * 1000 > 8) heading = bearingBetween(next, ahead);
+            }
+          }
+        }
+      }
+      headingRef.current = heading;
     }
-    if (followRoute) mapRef.current?.panTo(next, { animate: true, duration: 0.45 });
+    lastPosRef.current = next;
+    const map = mapRef.current;
+    if (map && mapReadyRef.current) {
+      const accuracySource = map.getSource("accuracy") as unknown as { setData: (data: GeoFeatureCollection) => void } | undefined;
+      accuracySource?.setData({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          properties: {},
+          geometry: { type: "Polygon", coordinates: circlePolygon(next, Math.min(accuracy, 220)) },
+        }],
+      });
+      // I körläge: modern bil med nos i färdriktningen. Annars: vanlig blå prick.
+      const { className, html } = followRoute ? drivingCarIcon(headingRef.current) : userIcon();
+      const element = makeMarkerElement(className, html);
+      element.title = followRoute ? "Din bil – körläge" : "Din position";
+      userMarkerRef.current?.remove();
+      userMarkerRef.current = new MapLibreMarker({ element }).setLngLat(toLngLat(next)).addTo(map);
+    }
+    // Följ bilen men rör aldrig zoomen här – höjden bestämmer du själv med +/– och den
+    // ligger kvar tills du ändrar den igen. I 3D-läge lutas kartan och vrids efter
+    // färdriktningen som i Google Maps/Waze; i 2D-läge hålls den platt och norr-upp.
+    if (followRoute && map) {
+      if (map3dRef.current) {
+        map.easeTo({ center: toLngLat(next), bearing: headingRef.current, pitch: DRIVING_PITCH, duration: 500 });
+      } else {
+        map.easeTo({ center: toLngLat(next), bearing: 0, pitch: 0, duration: 500 });
+      }
+    }
   }, []);
 
   const locateUser = () => {
@@ -2859,7 +3047,7 @@ function App() {
         updateUserLocation(next, position.coords.accuracy);
         setClickedPosition(null);
         setLocating(false);
-        mapRef.current?.flyTo(next, 16, { duration: 1.2 });
+        mapRef.current?.flyTo({ center: toLngLat(next), zoom: 16, duration: 1200 });
         showNotice("GPS-position hittad");
       },
       () => {
@@ -2872,14 +3060,39 @@ function App() {
 
   const calculateRoute = useCallback(async (destination: ParkingPlace, start: LatLng, tracking: boolean) => {
     setRouteLoading(true);
-    routeLayerRef.current?.clearLayers();
+    const map = mapRef.current;
+    const routeSource = map?.getSource("route") as unknown as { setData: (data: GeoFeatureCollection) => void } | undefined;
+    routeSource?.setData(emptyFeatureCollection());
     const drawRoute = (positions: LatLng[], fallback: boolean, distance: number, minutes: number, steps: NavigationStep[] = []) => {
-      const layer = routeLayerRef.current;
-      if (!layer) return;
-      L.polyline(positions, { pane: "route", color: "#ffffff", weight: 10, opacity: 0.92 }).addTo(layer);
-      L.polyline(positions, { pane: "route", color: "#1266ee", weight: 6, opacity: 1, dashArray: fallback ? "7 10" : undefined }).addTo(layer);
-      mapRef.current?.fitBounds(L.latLngBounds(positions), { paddingTopLeft: [420, 90], paddingBottomRight: [70, 170], maxZoom: 17 });
-      setRouteInfo({ distance, minutes, fallback, destination, positions, steps, currentStep: 0, remainingMeters: distance * 1000, tracking: tracking && !fallback, arrived: false });
+      routeSource?.setData({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          properties: {},
+          geometry: { type: "LineString", coordinates: positions.map(toLngLat) },
+        }],
+      });
+      // Streckad linje när bara fågelvägen kan visas (offline).
+      // Heldragen linje normalt ([1, 0] = streck utan mellanrum), streckad för fågelvägen.
+      map?.setPaintProperty("route-line", "line-dasharray", fallback ? [2, 2.2] : [1, 0]);
+      const willTrack = tracking && !fallback;
+      if (willTrack) {
+        // Körläge: starta på din sparade höjd i stället för att zooma ut till hela rutten.
+        // Omdirigeringar under körning rör inte zoomen alls.
+        const isReroute = routeInfoRef.current?.tracking === true;
+        if (!isReroute) {
+          map?.flyTo({
+            center: toLngLat(positions[0]),
+            zoom: drivingZoomRef.current,
+            bearing: map3dRef.current ? headingRef.current : 0,
+            pitch: map3dRef.current ? DRIVING_PITCH : 0,
+            duration: 1000,
+          });
+        }
+      } else {
+        map?.fitBounds(boundsOf(positions), { padding: { top: 90, bottom: 170, left: 420, right: 70 }, maxZoom: 17 });
+      }
+      setRouteInfo({ distance, minutes, fallback, destination, positions, steps, currentStep: 0, remainingMeters: distance * 1000, tracking: willTrack, arrived: false });
       setSelectedParking(null);
     };
 
@@ -2919,7 +3132,12 @@ function App() {
   }, [online, showNotice]);
 
   const clearRoute = () => {
-    routeLayerRef.current?.clearLayers();
+    const map = mapRef.current;
+    const wasTracking = routeInfoRef.current?.tracking === true;
+    (map?.getSource("route") as unknown as { setData: (data: GeoFeatureCollection) => void } | undefined)?.setData(emptyFeatureCollection());
+    // Räta upp kartan igen efter körläget – men bara om vi faktiskt körde, så att en
+    // manuellt lutad/vriden karta i normalläge lämnas orörd.
+    if (wasTracking) map?.easeTo({ pitch: 0, bearing: 0, duration: 500 });
     setRouteInfo(null);
   };
 
@@ -2954,7 +3172,7 @@ function App() {
     const watchId = navigator.geolocation.watchPosition(
       (position) => {
         const next: LatLng = [position.coords.latitude, position.coords.longitude];
-        updateUserLocation(next, position.coords.accuracy, true);
+        updateUserLocation(next, position.coords.accuracy, true, position.coords.heading);
         const activeRoute = routeInfoRef.current;
         if (!activeRoute?.tracking) return;
 
@@ -3040,7 +3258,12 @@ function App() {
       setCanInstall(false);
     } else {
       const map = mapRef.current;
-      setOfflineTiles(map ? collectOfflineTileUrls(map.getBounds()) : []);
+      setOfflineTiles(map ? collectOfflineTileUrls({
+        north: map.getBounds().getNorth(),
+        south: map.getBounds().getSouth(),
+        east: map.getBounds().getEast(),
+        west: map.getBounds().getWest(),
+      }) : []);
       setOfflineDialogOpen(true);
     }
   };
@@ -3080,7 +3303,7 @@ function App() {
   const showParking = (place: ParkingPlace) => {
     setSelectedZone(null);
     setSelectedParking(place);
-    mapRef.current?.flyTo([place.lat, place.lng], Math.max(mapRef.current.getZoom(), 15), { duration: 0.8 });
+    mapRef.current?.flyTo({ center: toLngLat([place.lat, place.lng]), zoom: Math.max(mapRef.current?.getZoom() ?? 15, 15), duration: 800 });
   };
 
   const isFavorite = (place: ParkingPlace) => favorites.some((favorite) => favorite.id === place.id);
@@ -3101,14 +3324,25 @@ function App() {
     showParking(place);
   };
 
+  // Delbar länk till en parkering: ?spot=<id>&lat=...&lng=...&title=...
+  // Id:t öppnar exakt plats i appen, koordinaterna är reserv om datan saknas.
+  const shareUrlFor = (place: ParkingPlace) => {
+    const params = new URLSearchParams({
+      spot: place.id,
+      lat: place.lat.toFixed(5),
+      lng: place.lng.toFixed(5),
+      title: place.name,
+    });
+    return `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+  };
+
   const shareParking = async (place: ParkingPlace) => {
     const price = place.free
       ? "Gratis"
       : isTariffId(place.tariff)
         ? `${placeTariffLabel(place)} – ${getCurrentPrice(place.tariff).label}`
         : place.priceText;
-    const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lng}`;
-    const text = `${place.name}\n${place.address}, ${place.area}\n${price}\n${mapsUrl}`;
+    const text = `${place.name}\n${place.address}, ${place.area}\n${price}\n${shareUrlFor(place)}`;
     if (navigator.share) {
       try {
         await navigator.share({ title: place.name, text });
@@ -3131,6 +3365,54 @@ function App() {
     }
     showNotice("Parkeringsinformationen kopierades");
   };
+
+  // Delad parkering via URL (?spot=<id>&lat=..&lng=..&title=..). Id:t öppnar exakt
+  // plats när datan finns, koordinaterna är reserv så att länken alltid fungerar.
+  const [sharedSpot] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const lat = Number(params.get("lat"));
+      const lng = Number(params.get("lng"));
+      const spot = params.get("spot") || undefined;
+      const title = params.get("title") || "Delad parkering";
+      if (!spot && (!Number.isFinite(lat) || !Number.isFinite(lng))) return null;
+      return { spot, lat, lng, title };
+    } catch {
+      return null;
+    }
+  });
+  const sharedOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!sharedSpot || sharedOpenedRef.current || !mapReady) return;
+    const hasCoords = Number.isFinite(sharedSpot.lat) && Number.isFinite(sharedSpot.lng);
+    const byId = sharedSpot.spot ? allParking.find((place) => place.id === sharedSpot.spot) : undefined;
+    // Id utan koordinater som ännu inte finns i datan: vänta på fler dataladdningar.
+    if (!byId && !hasCoords) return;
+    const place: ParkingPlace = byId ?? ({
+      id: sharedSpot.spot ?? `shared-${sharedSpot.lat}-${sharedSpot.lng}`,
+      name: sharedSpot.title,
+      address: `${sharedSpot.lat.toFixed(5)}, ${sharedSpot.lng.toFixed(5)}`,
+      area: "Stockholm",
+      lat: sharedSpot.lat,
+      lng: sharedSpot.lng,
+      kind: "surface",
+      tariff: null,
+      free: false,
+      priceText: "Delad plats",
+      note: "Platsen delades via länk. Kontrollera skyltningen på plats.",
+      source: "local",
+    } satisfies ParkingPlace);
+    sharedOpenedRef.current = true;
+    setSelectedParking(place);
+    setPanelOpen(false);
+    mapRef.current?.flyTo({ center: toLngLat([place.lat, place.lng]), zoom: 16, duration: 1200 });
+    try {
+      window.history.replaceState(null, "", window.location.pathname);
+    } catch {
+      // Historik saknas – lämna URL:en orörd.
+    }
+    showNotice(`Öppnade delad plats: ${place.name}`);
+  }, [allParking, mapReady, sharedSpot, showNotice]);
 
   const parkedCarCandidate = selectedParking
     ? { lat: selectedParking.lat, lng: selectedParking.lng, address: `${selectedParking.address}, ${selectedParking.area}`, source: "parking" as const }
@@ -3185,6 +3467,7 @@ function App() {
       // Påminnelsevalet följer med mellan parkeringar – den som vill ha påminnelse vill ha det varje gång.
       reminder: parkedCar?.reminder ?? false,
       reminderLead: reminderLeadOf(parkedCar),
+      reg: vehicleReg || null,
     });
     setParkedCarEditing(false);
     const savedMessage = parkedCarCandidateTariff
@@ -3212,6 +3495,47 @@ function App() {
     }
     showNotice(`Påminnelse på · ${reminderLeadOf(parkedCar)} min innan avgiften ändras eller servicetiden börjar`);
   };
+
+  const startDiscTimer = () => {
+    if (!selectedParking) return;
+    setDiscTimer({
+      endsAt: Date.now() + discMinutes * 60_000,
+      minutes: discMinutes,
+      placeId: selectedParking.id,
+      placeName: selectedParking.name,
+    });
+    discWarnedRef.current = null;
+    discFiredRef.current = null;
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        void Notification.requestPermission().catch(() => "denied");
+      }
+    } catch {
+      // Utan stöd för notiser används appens egen ruta.
+    }
+    showNotice(`P-skiva startad · ${formatDuration(discMinutes * 60_000)} – du får en notis när tiden går ut`);
+  };
+
+  const cancelDiscTimer = () => {
+    setDiscTimer(null);
+    showNotice("P-skivan avbröts");
+  };
+
+  // P-skiva: varna 10 min innan och notifiera när tiden går ut. Appen måste vara öppen.
+  useEffect(() => {
+    if (!discTimer) return;
+    const msLeft = discTimer.endsAt - clock;
+    if (msLeft <= 0) {
+      if (discFiredRef.current === discTimer.endsAt) return;
+      discFiredRef.current = discTimer.endsAt;
+      notifyParkedCar(`P-skivan har gått ut (${discTimer.placeName}). Flytta bilen.`, "parksthlm-disc");
+      return;
+    }
+    if (msLeft <= DISC_WARN_MINUTES * 60_000 && discWarnedRef.current !== discTimer.endsAt) {
+      discWarnedRef.current = discTimer.endsAt;
+      notifyParkedCar(`${DISC_WARN_MINUTES} min kvar på P-skivan (${discTimer.placeName}).`, "parksthlm-disc-warn");
+    }
+  }, [clock, discTimer, notifyParkedCar]);
 
   const setReminderLead = (lead: ReminderLeadMinutes) => {
     if (!parkedCar) return;
@@ -3243,15 +3567,18 @@ function App() {
     setSelectedParking(null);
     setSelectedZone(null);
     setClickedPosition(null);
-    mapRef.current?.flyTo([parkedCar.lat, parkedCar.lng], 17, { duration: 0.8 });
+    mapRef.current?.flyTo({ center: toLngLat([parkedCar.lat, parkedCar.lng]), zoom: 17, duration: 800 });
   };
 
   const saveVehicleProfile = () => {
+    const reg = normalizeReg(vehicleRegDraft);
     setVehicleProfile(vehicleProfileDraft);
     localStorage.setItem(VEHICLE_PROFILE_STORAGE_KEY, JSON.stringify(vehicleProfileDraft));
+    setVehicleReg(reg);
+    localStorage.setItem(VEHICLE_REG_STORAGE_KEY, JSON.stringify(reg));
     selectCategory(VEHICLE_PROFILES[vehicleProfileDraft].filter);
     setVehicleProfileOpen(false);
-    showNotice(`${VEHICLE_PROFILES[vehicleProfileDraft].label} sparad – relevant filter är aktivt`);
+    showNotice(`${VEHICLE_PROFILES[vehicleProfileDraft].label} sparad${reg ? ` · ${reg}` : ""} – relevant filter är aktivt`);
   };
 
   // Escape stänger det översta öppna lagret (modal, kort eller körläge) i den ordning
@@ -3338,7 +3665,7 @@ function App() {
           <button className="mobile-menu" type="button" onClick={() => setPanelOpen((open) => !open)} aria-label="Öppna meny">
             {panelOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
-          <button className="brand" type="button" onClick={() => mapRef.current?.flyTo(STOCKHOLM_CENTER, 13, { duration: 1 })}>
+          <button className="brand" type="button" onClick={() => mapRef.current?.flyTo({ center: toLngLat(STOCKHOLM_CENTER), zoom: 13, duration: 1000 })}>
             <span className="brand-mark"><ParkingCircle size={24} strokeWidth={2.4} /></span>
             <span><strong>ParkeraiSthlm</strong><small>Taxa, plats, klart.</small></span>
           </button>
@@ -3671,13 +3998,13 @@ function App() {
         <button type="button" className={`utility-control parked-control ${parkedCar ? "has-saved-car" : ""}`} onClick={() => parkedCar ? returnToParkedCar() : openParkedCar(true)} aria-label={parkedCar ? "Gå direkt till min parkerade bil" : "Spara var jag parkerade"} title={parkedCar ? "Gå till min bil" : "Var parkerade jag?"} data-mobile-label={parkedCar ? "Min bil" : "Spara bil"}>
           <CarFront size={17} /> <span>{parkedCar ? "Min bil" : "Spara bil"}</span>
         </button>
-        <button type="button" className="utility-control profile-control" onClick={() => { setVehicleProfileDraft(vehicleProfile); setVehicleProfileOpen(true); }} aria-label={`Fordonsprofil, ${VEHICLE_PROFILES[vehicleProfile].label}`} title="Fordonsprofil" data-mobile-label="Profil">
+        <button type="button" className="utility-control profile-control" onClick={() => { setVehicleProfileDraft(vehicleProfile); setVehicleRegDraft(vehicleReg); setVehicleProfileOpen(true); }} aria-label={`Fordonsprofil, ${VEHICLE_PROFILES[vehicleProfile].label}`} title="Fordonsprofil" data-mobile-label="Profil">
           <Settings2 size={17} /> <span>{VEHICLE_PROFILES[vehicleProfile].label}</span>
         </button>
         <button type="button" onClick={() => setInfoOpen(true)} aria-label="Information"><Info size={18} /></button>
       </div>
 
-      <div className="map-controls" aria-label="Kartkontroller">
+      <div className={`map-controls${routeInfo?.tracking ? " is-driving" : ""}`} aria-label="Kartkontroller">
         <button type="button" onClick={() => mapRef.current?.zoomIn()} aria-label="Zooma in"><ZoomIn size={20} /></button>
         <button type="button" onClick={() => mapRef.current?.zoomOut()} aria-label="Zooma ut"><ZoomOut size={20} /></button>
         <button type="button" className={locating ? "locating" : ""} onClick={locateUser} aria-label="Hitta min position">
@@ -3782,6 +4109,39 @@ function App() {
                 </div>
               </div>
             ) : null}
+            <div className="disc-card">
+              <TimerIcon size={17} />
+              <div>
+                <small>P-skiva / maxtid</small>
+                {selectedParking.maxMinutes ? (
+                  <strong>Max {formatDuration(selectedParking.maxMinutes * 60_000)} enligt skyltning</strong>
+                ) : (
+                  <strong>Ingen maxtid rapporterad – välj tid manuellt</strong>
+                )}
+                {discTimer && discTimer.placeId === selectedParking.id ? (
+                  <span className="disc-active">P-skiva igång · {discTimer.endsAt > clock ? `${formatDuration(discTimer.endsAt - clock)} kvar` : "tiden är ute – flytta bilen"}</span>
+                ) : null}
+                <div className="disc-presets" role="group" aria-label="Välj P-skivetid">
+                  {DISC_PRESETS.map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      className={discMinutes === preset ? "active" : ""}
+                      aria-pressed={discMinutes === preset}
+                      onClick={() => setDiscMinutes(preset)}
+                    >
+                      {formatDuration(preset * 60_000)}
+                    </button>
+                  ))}
+                </div>
+                {discTimer && discTimer.placeId === selectedParking.id ? (
+                  <button type="button" onClick={cancelDiscTimer}>Avbryt P-skiva</button>
+                ) : (
+                  <button type="button" className="modal-action" onClick={startDiscTimer}><TimerIcon size={16} /> Starta P-skiva · {formatDuration(discMinutes * 60_000)}</button>
+                )}
+                <span>Kontrollera alltid vägmärket på plats. Appen måste vara öppen för notisen.</span>
+              </div>
+            </div>
             <p className="place-note"><CircleAlert size={15} />{selectedParkingTariff ? TARIFFS[selectedParkingTariff].hours : selectedParking.note}</p>
             {(selectedParkingTariff || selectedParking.source === "api") && selectedNavigation ? (
               <div className="payment-card">
@@ -3950,6 +4310,19 @@ function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {discTimer && (
+          <motion.div className="route-banner disc-banner" initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
+            <span><TimerIcon size={20} /></span>
+            <div>
+              <small>{discTimer.endsAt > clock ? "P-skiva igång" : "P-skivan har gått ut"}</small>
+              <strong>{discTimer.endsAt > clock ? `${formatDuration(discTimer.endsAt - clock)} kvar` : "Flytta bilen"} · {discTimer.placeName}</strong>
+            </div>
+            <button type="button" onClick={cancelDiscTimer} aria-label="Avbryt P-skiva"><X size={18} /></button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {favoritesOpen && (
           <motion.div className="modal-backdrop feature-modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setFavoritesOpen(false)}>
             <motion.section className="info-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="favorites-title" tabIndex={-1} initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
@@ -4037,6 +4410,7 @@ function App() {
                   ) : null}
                   <div className="parked-car-details">
                     <div><small>Plats</small><strong>{parkedCar.address}</strong><span>{parkedCar.lat.toFixed(5)}, {parkedCar.lng.toFixed(5)}</span></div>
+                    {parkedCar.reg && <div><small>Bil</small><strong className="reg-plate">{parkedCar.reg}</strong></div>}
                     {parkedCar.spot && <div><small>Våning / plats</small><strong>{parkedCar.spot}</strong></div>}
                     {parkedCar.note && <div><small>Anteckning</small><strong>{parkedCar.note}</strong></div>}
                   </div>
@@ -4085,6 +4459,31 @@ function App() {
                   );
                 })}
               </div>
+              <h3 className="map-view-heading">Kartläge</h3>
+              <p className="map-view-text">3D lutar kartan i körläge som Google Maps och Waze. 2D håller den alltid platt.</p>
+              <div className="vehicle-profile-grid map-view-grid">
+                <button type="button" className={map3dEnabled ? "active" : ""} onClick={() => setMap3d(true)}>
+                  <span><BoxIcon size={20} /></span>
+                  <strong>3D</strong><small>Lutad vy i körläge</small>
+                </button>
+                <button type="button" className={!map3dEnabled ? "active" : ""} onClick={() => setMap3d(false)}>
+                  <span><MapIcon size={20} /></span>
+                  <strong>2D</strong><small>Platt karta norr-upp</small>
+                </button>
+              </div>
+              <h3 className="map-view-heading">Registreringsnummer <small className="optional-tag">valfritt</small></h3>
+              <p className="map-view-text">Visas på det sparade bilkortet. Praktiskt med flera bilar eller hyrbil.</p>
+              <label className="reg-input-label">
+                <input
+                  value={vehicleRegDraft}
+                  onChange={(event) => setVehicleRegDraft(normalizeReg(event.target.value))}
+                  maxLength={7}
+                  placeholder="T.ex. ABC123"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="Registreringsnummer"
+                />
+              </label>
               <button type="button" className="modal-action" onClick={saveVehicleProfile}><Settings2 size={17} /> Spara och använd {VEHICLE_PROFILES[vehicleProfileDraft].label}</button>
             </motion.section>
           </motion.div>

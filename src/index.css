@@ -45,7 +45,8 @@ a:focus-visible {
   background: #dfe7e5;
 }
 
-.map-canvas {
+.map-canvas,
+.map-canvas.maplibregl-map {
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -55,11 +56,11 @@ a:focus-visible {
     linear-gradient(120deg, rgba(205, 222, 219, 0.55), transparent 48%);
 }
 
-.leaflet-container {
+.maplibregl-map {
   font: inherit;
 }
 
-.leaflet-control-attribution {
+.maplibregl-ctrl-attrib {
   margin-right: 13px !important;
   margin-bottom: 3px !important;
   border-radius: 5px 5px 0 0;
@@ -67,22 +68,17 @@ a:focus-visible {
   font-size: 10px;
 }
 
-.is-offline .base-map-tiles {
+.maplibregl-ctrl-attrib a {
+  color: inherit;
+}
+
+.is-offline .maplibregl-canvas {
   filter: saturate(0.5) contrast(0.95);
 }
 
-.street-tooltip {
-  border: 0 !important;
-  border-radius: 9px !important;
-  padding: 6px 9px !important;
-  color: #172536 !important;
-  font-size: 11px !important;
-  font-weight: 750 !important;
-  box-shadow: 0 6px 18px rgba(30, 47, 58, 0.16) !important;
-}
-
-.street-tooltip::before {
-  display: none;
+.parking-marker-wrap,
+.parked-car-marker-wrap {
+  cursor: pointer;
 }
 
 .map-panel {
@@ -1140,6 +1136,79 @@ a:focus-visible {
   background: #3478f6;
 }
 
+/* Körlägets bil: modern blå badge med vit bil i fågelperspektiv. Hela märket roteras
+   med --car-heading så noskilen och bilen alltid pekar i färdriktningen. */
+.driving-car-wrap {
+  background: transparent !important;
+  border: 0 !important;
+}
+
+.driving-car-marker {
+  position: relative;
+  width: 56px;
+  height: 56px;
+}
+
+.driving-car-halo {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(18, 102, 238, 0.35) 0%, rgba(18, 102, 238, 0.12) 55%, rgba(18, 102, 238, 0) 72%);
+  animation: driving-car-halo 2.4s ease-out infinite;
+}
+
+.driving-car-nose {
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-right: 9px solid transparent;
+  border-bottom: 13px solid #1266ee;
+  border-left: 9px solid transparent;
+  filter: drop-shadow(0 2px 3px rgba(11, 63, 158, 0.45));
+  transform: translateX(-50%) rotate(var(--car-heading, 0deg));
+  transform-origin: 50% 35px;
+}
+
+.driving-car-body {
+  position: absolute;
+  inset: 6px;
+  display: grid;
+  place-items: center;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(180deg, #2f86ff 0%, #1266ee 55%, #0b4fc0 100%);
+  box-shadow:
+    0 8px 22px rgba(11, 63, 158, 0.5),
+    inset 0 -3px 8px rgba(4, 32, 84, 0.4);
+  transform: rotate(var(--car-heading, 0deg));
+}
+
+.driving-car-glyph {
+  width: 22px;
+  height: 32px;
+  filter: drop-shadow(0 1px 1px rgba(4, 32, 84, 0.5));
+}
+
+@keyframes driving-car-halo {
+  0% { transform: scale(0.75); opacity: 0.9; }
+  70%, 100% { transform: scale(1.25); opacity: 0; }
+}
+
+.dark .driving-car-body {
+  border-color: #dbeafe;
+  box-shadow:
+    0 0 0 3px rgba(56, 189, 248, 0.35),
+    0 8px 24px rgba(0, 0, 0, 0.6),
+    inset 0 -3px 8px rgba(4, 32, 84, 0.55);
+}
+
+.dark .driving-car-nose {
+  border-bottom-color: #38bdf8;
+}
+
 .parked-car-marker-wrap {
   border: 0 !important;
   background: transparent !important;
@@ -1925,6 +1994,87 @@ a:focus-visible {
   white-space: nowrap;
 }
 
+/* P-skiva: återanvänder route-bannerns utseende, ligger under den på desktop och
+   ovanför den på mobil (där route-bannern är bottenförankrad). */
+.disc-banner {
+  top: 84px;
+}
+
+.disc-banner > span {
+  background: #d97706;
+}
+
+.disc-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 11px;
+  padding: 10px 11px;
+  border: 1px solid #f0d59c;
+  border-radius: 11px;
+  color: #a7650e;
+  background: #fff9ec;
+}
+
+.disc-card > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.disc-card > div {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+}
+
+.disc-card small {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.disc-card strong {
+  color: #7c4a03;
+  font-size: 10.5px;
+  font-weight: 640;
+  line-height: 1.45;
+}
+
+.disc-card span {
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.disc-active {
+  color: #b45309 !important;
+  font-weight: 800 !important;
+}
+
+.disc-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.disc-presets button {
+  min-height: 34px;
+  border: 1px solid #ead3a0;
+  border-radius: 10px;
+  color: #92610a;
+  background: #fff;
+  font-size: 10.5px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.disc-presets button.active {
+  border-color: #d97706;
+  color: #b45309;
+  background: #fef3e2;
+}
+
 .route-banner > button {
   display: grid;
   width: 30px;
@@ -2561,6 +2711,19 @@ a:focus-visible {
     display: none;
   }
 
+  /* I körläge ska +/– alltid gå att nå på mobilen – annars går höjden inte att ändra. */
+  .map-controls.is-driving {
+    bottom: calc(170px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .map-controls.is-driving button:nth-child(1),
+  .map-controls.is-driving button:nth-child(2) {
+    display: inline-flex;
+    width: 47px;
+    height: 47px;
+    border-radius: 14px;
+  }
+
   .map-controls button:last-child {
     width: 47px;
     height: 47px;
@@ -2617,6 +2780,11 @@ a:focus-visible {
     left: 10px;
     min-width: 0;
     transform: none;
+  }
+
+  .disc-banner {
+    top: auto;
+    bottom: calc(170px + env(safe-area-inset-bottom, 0px));
   }
 
   .toast {
@@ -3014,12 +3182,37 @@ a:focus-visible {
    ========================================================================== */
 
 /* Map canvas night style */
-.dark .base-map-tiles {
+.dark .maplibregl-canvas {
   filter: invert(100%) hue-rotate(180deg) brightness(85%) contrast(100%) saturate(0.85);
 }
 
-.dark .leaflet-container {
+.dark .map-canvas {
   background-color: #0b1119 !important;
+}
+
+.dark .maplibregl-ctrl-attrib {
+  background: rgba(22, 33, 44, 0.85) !important;
+  color: #94a3b8;
+}
+
+.map-view-heading {
+  margin: 20px 0 0;
+  color: #263746;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.map-view-text {
+  margin: 4px 0 0 !important;
+  font-size: 11px !important;
+}
+
+.map-view-grid {
+  margin-top: 10px !important;
+}
+
+.dark .map-view-heading {
+  color: #f8fafc;
 }
 
 /* Panel glassmorphism in dark mode */
@@ -3408,6 +3601,101 @@ a:focus-visible {
 
 .dark .rate-card strong {
   color: #dbeafe;
+}
+
+.dark .disc-banner > span {
+  background: #b45309;
+}
+
+.dark .disc-card {
+  border-color: #7c4a12;
+  color: #fdba74;
+  background: #3c2408;
+}
+
+.dark .disc-card strong {
+  color: #fde9c0;
+}
+
+.dark .disc-active {
+  color: #fbbf24 !important;
+}
+
+.dark .disc-presets button {
+  border-color: #7c4a12;
+  color: #fdba74;
+  background: #2a1c07;
+}
+
+.dark .disc-presets button.active {
+  border-color: #f59e0b;
+  color: #fde9c0;
+  background: #4a2f0b;
+}
+
+.optional-tag {
+  color: #89969e;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.reg-input-label {
+  display: block;
+  margin-top: 10px;
+}
+
+.reg-input-label input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 11px 12px;
+  border: 2px solid #1d3f68;
+  border-radius: 10px;
+  color: #1d3f68;
+  background: linear-gradient(180deg, #ffffff, #f2f6fb);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.reg-input-label input::placeholder {
+  color: #9fb0bd;
+  letter-spacing: 0.14em;
+}
+
+.reg-plate {
+  display: inline-block;
+  padding: 3px 10px;
+  border: 2px solid #1d3f68;
+  border-radius: 7px;
+  color: #1d3f68;
+  background: #fff;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.18em;
+}
+
+.dark .optional-tag {
+  color: #7d8fa0;
+}
+
+.dark .reg-input-label input {
+  border-color: #7dd3fc;
+  color: #f0f9ff;
+  background: linear-gradient(180deg, #0f2a44, #0b1e33);
+}
+
+.dark .reg-input-label input::placeholder {
+  color: #5b7288;
+}
+
+.dark .reg-plate {
+  border-color: #7dd3fc;
+  color: #f0f9ff;
+  background: #0b1e33;
 }
 
 .dark .service-day-card {
