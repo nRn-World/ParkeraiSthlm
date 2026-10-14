@@ -1760,6 +1760,7 @@ function App() {
     };
   }, [clickedPosition, clickedAddress]);
   const clickedNavigation = clickedPlace ? navigationLinks(clickedPlace.lat, clickedPlace.lng) : null;
+  const clickedTariff = clickedPlace?.tariff ?? null;
 
   const showNotice = useCallback((message: string) => {
     setNotice(message);
@@ -2193,6 +2194,9 @@ function App() {
       L.polyline(positions, { pane: "offlineBase", color: "#f8faf9", weight: 2, opacity: 0.95 }).addTo(offlineBase);
     });
 
+    // Taxeområdena ritas som rena bakgrundslager. Polygontäcken ligger ovanpå nästan hela
+    // innerstaden, så om de fångade klick gick det inte att sätta den röda kartmarkören där.
+    // Reglerna för ett område nås i stället via taxemärket i kortet för vald kartposition.
     const taxAreas = L.layerGroup().addTo(map);
     [...TAX_AREAS].sort((a, b) => b.tariff - a.tariff).forEach((area) => {
       const color = TARIFFS[area.tariff].color;
@@ -2203,14 +2207,8 @@ function App() {
         weight: 1.8,
         opacity: 0.88,
         fillOpacity: 0.24,
-        interactive: true,
-      })
-        .on("click", (event) => {
-          L.DomEvent.stopPropagation(event);
-          setSelectedParking(null);
-          setSelectedZone(area.tariff);
-        })
-        .addTo(taxAreas);
+        interactive: false,
+      }).addTo(taxAreas);
     });
 
     parkingLayerRef.current = L.layerGroup().addTo(map);
@@ -3834,7 +3832,7 @@ function App() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {clickedPosition && clickedPlace && (
+        {clickedPosition && clickedPlace && !selectedZone && (
           <motion.aside
             className="place-sheet clicked-sheet"
             initial={{ opacity: 0, y: 35, scale: 0.98 }}
@@ -3855,9 +3853,21 @@ function App() {
                   <h2>{clickedPlace.name}</h2>
                 )}
                 <p>{clickedPlace.address}</p>
-                <span className="place-tariff" style={{ background: placeColor(clickedPlace) }}>
-                  {clickedPlace.tariff ? placeTariffLabel(clickedPlace) : "Taxa ej karterad"}
-                </span>
+                {clickedTariff ? (
+                  <button
+                    type="button"
+                    className="place-tariff is-button"
+                    style={{ background: placeColor(clickedPlace) }}
+                    onClick={() => setSelectedZone(clickedTariff)}
+                    title={`Visa reglerna för taxa ${clickedTariff}`}
+                  >
+                    {placeTariffLabel(clickedPlace)} · visa regler
+                  </button>
+                ) : (
+                  <span className="place-tariff" style={{ background: placeColor(clickedPlace) }}>
+                    Taxa ej karterad
+                  </span>
+                )}
               </div>
             </div>
             <div className="place-facts">

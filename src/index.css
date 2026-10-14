@@ -892,7 +892,8 @@ a:focus-visible {
 
 .panel-foot svg {
   flex: 0 0 auto;
-  color: #e28b35;
+  /* Mörkare orange så att varningsikonen syns även mot den ljusa foten (kontrast ≥ 4,5). */
+  color: #c2410c;
 }
 
 .panel-foot span {
@@ -1373,6 +1374,17 @@ a:focus-visible {
   font-size: 9px;
   font-weight: 770;
   letter-spacing: 0.01em;
+}
+
+/* Taxemärket i kortet för vald kartposition öppnar områdets regler. */
+.place-tariff.is-button {
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.place-tariff.is-button:hover {
+  filter: brightness(1.07);
 }
 
 .place-facts {
@@ -3038,6 +3050,14 @@ a:focus-visible {
   border-color: #9a3412;
 }
 
+.dark .connection svg {
+  color: #4ade80;
+}
+
+.dark .connection.offline svg {
+  color: #fdba74;
+}
+
 .dark .theme-toggle {
   background: #1e293b;
   border-color: #334155;
@@ -3062,6 +3082,10 @@ a:focus-visible {
 
 .dark .search-box input::placeholder {
   color: #64748b;
+}
+
+.dark .search-box > svg {
+  color: #94a3b8;
 }
 
 .dark .clear-search {
@@ -3266,7 +3290,7 @@ a:focus-visible {
 
 .dark .result-copy i {
   border-left-color: #334155;
-  color: #64748b;
+  color: #94a3b8;
 }
 
 .dark .result-distance {
@@ -3297,7 +3321,7 @@ a:focus-visible {
 .dark .panel-foot {
   background: #141e2b;
   border-top-color: #1e293b;
-  color: #64748b;
+  color: #94a3b8;
 }
 
 .dark .panel-foot button {
@@ -3537,11 +3561,13 @@ a:focus-visible {
 }
 
 /* Helper dynamic styling */
-.dark .result-icon {
-  background: color-mix(in srgb, var(--place-color) 18%, #1e293b);
-}
-
-.dark .place-title > span {
+/* Platsens färg styr både bakgrund och ikon. Neutrala platser har en mörk navy
+   (#172536) som försvinner mot den mörka panelen, så bläcket ljusas upp i mörkt
+   läge samtidigt som bakgrunden tonas ned. Färgerna hålls ihop i samma regel. */
+.dark .result-icon,
+.dark .place-title > span,
+.dark .saved-place-main > span:first-child {
+  color: color-mix(in srgb, var(--place-color) 45%, #e5edf5);
   background: color-mix(in srgb, var(--place-color) 18%, #1e293b);
 }
 
