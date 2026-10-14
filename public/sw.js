@@ -1,4 +1,5 @@
-const APP_CACHE = "park-stockholm-app-v7";
+// v8: nytt appnamn i manifestet (short_name), så gamla appskal måste hämtas om.
+const APP_CACHE = "park-stockholm-app-v8";
 const MAP_CACHE = "park-stockholm-map-v7";
 const APP_SHELL = ["./", "./index.html", "./manifest.webmanifest", "./icon.svg"];
 
