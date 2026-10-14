@@ -454,6 +454,114 @@ a:focus-visible {
   background: #eef5ff;
 }
 
+.resident-filter {
+  margin: 0 12px 10px;
+  padding: 10px 11px;
+  border: 1px solid #dbe4e2;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.resident-filter label {
+  display: grid;
+  gap: 6px;
+  color: #40525f;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.resident-filter select,
+.calculator-inputs select,
+.calculator-inputs input,
+.ev-advanced select {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #dce4e3;
+  border-radius: 9px;
+  color: #263746;
+  background: #fff;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.resident-filter small {
+  display: block;
+  margin-top: 7px;
+  color: #77858e;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.fee-calculator {
+  margin: 0 12px 12px;
+  padding-bottom: 10px;
+  border: 1px solid #dbe4e2;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.calculator-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+.calculator-inputs label {
+  display: grid;
+  gap: 5px;
+  color: #40525f;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.calculator-inputs label:last-child {
+  grid-column: 1 / -1;
+}
+
+.calculator-total {
+  margin: 10px 12px 4px;
+  color: #263746;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.calculator-total strong {
+  color: #1266ee;
+}
+
+.calculator-segments {
+  margin: 0;
+  padding: 0 12px;
+  list-style: none;
+}
+
+.calculator-segments li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-top: 1px solid #edf0f0;
+  color: #52636e;
+  font-size: 10px;
+}
+
+.calculator-error {
+  margin: 8px 12px 0;
+  color: #b44e40;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.calculator-more,
+.calculator-note {
+  display: block;
+  margin: 7px 12px 0;
+  color: #77858e;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
 .panel-body {
   display: flex;
   min-height: 0;
@@ -595,6 +703,36 @@ a:focus-visible {
   font-style: normal;
   font-weight: 590;
   white-space: nowrap;
+}
+
+.result-copy em.service-warning {
+  flex: 1 1 100%;
+  color: #a7650e;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.ev-advanced {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 0 16px 6px;
+}
+
+.ev-advanced label {
+  display: grid;
+  gap: 5px;
+  color: #40525f;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.ev-advanced-note {
+  margin: 0 16px 8px;
+  color: #77858e;
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .result-distance {
@@ -1278,6 +1416,13 @@ a:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.occupancy-note {
+  margin: 8px 0 0;
+  color: #77858e;
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
 .place-note {
   display: flex;
   align-items: flex-start;
@@ -1445,9 +1590,140 @@ a:focus-visible {
 
 .place-actions {
   display: grid;
-  grid-template-columns: 1.6fr 1fr 1fr;
+  grid-template-columns: 1.5fr repeat(3, minmax(0, 1fr));
   gap: 7px;
   margin-top: 13px;
+}
+
+.payment-card {
+  margin-top: 11px;
+  padding: 10px 11px;
+  border: 1px solid #d7e5fb;
+  border-radius: 11px;
+  background: #f3f7ff;
+}
+
+.payment-card small {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  color: #4c6a95;
+}
+
+.payment-card strong {
+  display: block;
+  margin-top: 2px;
+  color: #1d3f68;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.payment-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.payment-actions button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #c9dcfa;
+  border-radius: 9px;
+  color: #1d4fa1;
+  background: #fff;
+  font-size: 9.5px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.payment-card span {
+  display: block;
+  margin-top: 7px;
+  color: #5b718b;
+  font-size: 8.5px;
+  line-height: 1.45;
+}
+
+.place-ev-operator {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed #e7eceb;
+}
+
+.place-ev-operator small {
+  color: #7c3aed;
+  font-size: 9px;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.place-ev-operator strong {
+  display: block;
+  margin-top: 2px;
+  color: #263746;
+  font-size: 11px;
+}
+
+.operator-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.operator-actions button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #ddd0fa;
+  border-radius: 9px;
+  color: #5b21b6;
+  background: #faf7ff;
+  font-size: 9.5px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.place-ev-operator span {
+  display: block;
+  margin-top: 6px;
+  color: #6b7280;
+  font-size: 8.5px;
+  line-height: 1.45;
+}
+
+.reminder-leads {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.reminder-leads button {
+  min-height: 38px;
+  border: 1px solid #dce4e3;
+  border-radius: 10px;
+  color: #52636e;
+  background: #fff;
+  font-size: 10.5px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.reminder-leads button.active {
+  border-color: #1266ee;
+  color: #1266ee;
+  background: #eef5ff;
 }
 
 .place-actions button,
@@ -2305,7 +2581,7 @@ a:focus-visible {
   }
 
   .place-actions {
-    grid-template-columns: 1.5fr 1fr 1fr;
+    grid-template-columns: 1.5fr repeat(3, minmax(0, 1fr));
   }
 
   .zone-sheet {
@@ -2843,6 +3119,103 @@ a:focus-visible {
   color: #38bdf8;
 }
 
+.dark .resident-filter,
+.dark .fee-calculator {
+  background: #1e293b;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+.dark .resident-filter label,
+.dark .calculator-inputs label,
+.dark .ev-advanced label,
+.dark .calculator-total {
+  color: #cbd5e1;
+}
+
+.dark .resident-filter select,
+.dark .calculator-inputs select,
+.dark .calculator-inputs input,
+.dark .ev-advanced select {
+  background: #0f172a;
+  border-color: #334155;
+  color: #f8fafc;
+  color-scheme: dark;
+}
+
+.dark .resident-filter small,
+.dark .calculator-more,
+.dark .calculator-note,
+.dark .ev-advanced-note {
+  color: #94a3b8;
+}
+
+.dark .calculator-total strong {
+  color: #38bdf8;
+}
+
+.dark .calculator-segments li {
+  border-top-color: #334155;
+  color: #cbd5e1;
+}
+
+.dark .calculator-error {
+  color: #fca5a5;
+}
+
+.dark .result-copy em.service-warning {
+  color: #fbbf24;
+}
+
+.dark .payment-card {
+  background: #16263c;
+  border-color: #2f4d78;
+}
+
+.dark .payment-card small {
+  color: #93c5fd;
+}
+
+.dark .payment-card strong {
+  color: #dbeafe;
+}
+
+.dark .payment-actions button {
+  background: #0f172a;
+  border-color: #334155;
+  color: #93c5fd;
+}
+
+.dark .payment-card span {
+  color: #94a3b8;
+}
+
+.dark .place-ev-operator strong {
+  color: #f8fafc;
+}
+
+.dark .operator-actions button {
+  background: #1e293b;
+  border-color: #4c1d95;
+  color: #c4b5fd;
+}
+
+.dark .place-ev-operator span {
+  color: #94a3b8;
+}
+
+.dark .reminder-leads button {
+  background: #1e293b;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+.dark .reminder-leads button.active {
+  background: #0c4a6e;
+  border-color: #0284c7;
+  color: #38bdf8;
+}
+
 /* Smart suggestions dark overrides */
 .dark .suggestion-item,
 .dark .suggestion-tariff-btn {
@@ -2996,6 +3369,10 @@ a:focus-visible {
 }
 
 .dark .place-note {
+  color: #94a3b8;
+}
+
+.dark .occupancy-note {
   color: #94a3b8;
 }
 

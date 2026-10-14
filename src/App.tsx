@@ -56,7 +56,7 @@ import {
   type TariffId,
 } from "./data";
 
-type Category = "all" | "free" | "garage" | "street" | "disabled" | "ev" | "mc" | TariffId;
+type Category = "all" | "free" | "garage" | "street" | "disabled" | "ev" | "mc" | "resident" | TariffId;
 type NavigationStep = { instruction: string; distance: number; location: LatLng };
 type AreaScope = { center: LatLng; label: string; radiusKm: number };
 type RouteInfo = {
@@ -74,7 +74,9 @@ type RouteInfo = {
 type SearchLocation = { name: string; lat: number; lng: number; type: string };
 type InstallPlatform = "android" | "ios";
 type VehicleProfile = "car" | "ev" | "mc" | "disabled";
-type ResultSort = "distance" | "price" | "free";
+type ResultSort = "distance" | "price" | "free" | "power";
+type EvConnectorFilter = "all" | "type2" | "ccs" | "chademo" | "tesla";
+type ReminderLeadMinutes = 15 | 30;
 type ParkedCar = {
   lat: number;
   lng: number;
@@ -88,6 +90,7 @@ type ParkedCar = {
   tariff: TariffId | null;
   tariffLabel: string | null;
   reminder: boolean;
+  reminderLead?: ReminderLeadMinutes;
 };
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -117,8 +120,13 @@ const RESULT_SORTS: { value: ResultSort; label: string }[] = [
   { value: "price", label: "Billigast" },
   { value: "free", label: "Gratis nu" },
 ];
-// Hur långt innan en avgiftsändring som påminnelsen ska komma.
-const PARKING_REMINDER_LEAD_MINUTES = 15;
+const EV_RESULT_SORTS: { value: ResultSort; label: string }[] = [
+  ...RESULT_SORTS,
+  { value: "power", label: "Starkast" },
+];
+const REMINDER_LEAD_OPTIONS: ReminderLeadMinutes[] = [15, 30];
+// Sparade bilar från äldre versioner saknar vald framförhållning. Femton minuter
+// är samma beteende som tidigare och används därför som standard.
 // Höjs när tolkningen av Trafikkontorets föreskrifter ändras – då måste gamla cachade
 // poster läsas om i stället för att ligga kvar utan nya fält.
 const OFFICIAL_DATA_CACHE_VERSION = 5;
@@ -146,7 +154,7 @@ function collectOfflineTileUrls(bounds: ReturnType<LeafletMap["getBounds"]>) {
     if (yMax < yMin) continue;
     for (let x = xMin; x <= xMax; x += 1) {
       for (let y = yMin; y <= yMax; y += 1) {
-        urls.push(`https://a.tile.openstreetmap.org/${zoom}/${x}/${y}.png`);
+        urls.push(`https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`);
         // Avbryt tidigt i stället för att bygga en orimligt stor lista.
         if (urls.length > MAX_OFFLINE_TILES) return urls;
       }
@@ -185,6 +193,370 @@ function hasRecentPwaInstallDismissal() {
 
 function normalize(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+function reminderLeadOf(parked: ParkedCar | null | undefined): ReminderLeadMinutes {
+  return parked?.reminderLead === 30 ? 30 : 15;
+}
+
+function normalizeParkedCar(value: ParkedCar | null): ParkedCar | null {
+  if (!value) return null;
+  return { ...value, reminderLead: reminderLeadOf(value) };
+}
+
+type ServiceSeason = { startMonth: number; startDay: number; endMonth: number; endDay: number };
+type ServiceScheduleException = { parity?: "even" | "odd"; range?: ServiceSeason };
+type ServiceScheduleRule = {
+  weekday: number;
+  startMinutes: number;
+  endMinutes: number;
+  requiredRange?: ServiceSeason;
+  requiredParity?: "even" | "odd";
+  exceptions: ServiceScheduleException[];
+};
+type ServiceOccurrence = { start: Date; end: Date };
+type ResidentPermitInfo = { monthly: number | null; daily: number | null; unavailable: boolean; tariff: TariffId | null };
+type TariffFeeSegment = { start: Date; end: Date; amount: number };
+type TariffFeeCalculation = { total: number; segments: TariffFeeSegment[]; capped: boolean };
+type ParkingPaymentProvider = { id: string; label: string; url: string; note: string };
+type EvOperator = { id: string; label: string; ios: string; android: string; site: string };
+
+const SERVICE_WEEKDAYS = ["sondag", "mandag", "tisdag", "onsdag", "torsdag", "fredag", "lordag"];
+const SERVICE_MONTHS: Record<string, number> = {
+  januari: 1, februari: 2, mars: 3, april: 4, maj: 5, juni: 6,
+  juli: 7, augusti: 8, september: 9, oktober: 10, november: 11, december: 12,
+};
+const SERVICE_SCHEDULE_CACHE = new Map<string, ServiceScheduleRule | null>();
+const SERVICE_TONIGHT_HOURS = 24;
+const SERVICE_WARNING_HOURS = 48;
+const MAX_FEE_CALCULATION_DAYS = 31;
+
+// Stockholm Parkering visar betalningsappar per anläggning. Appen länkar därför till
+// de officiella betalningsguiderna i stället för att gissa djupplänkar eller zonkoder.
+const PARKING_PAYMENT_PROVIDERS: ParkingPaymentProvider[] = [
+  { id: "easypark", label: "EasyPark", url: "https://www.easypark.com/sv-se/sa-fungerar-det", note: "Välj område i appen eller ange områdeskoden från skylten." },
+  { id: "parkster", label: "Parkster", url: "https://www.parkster.com/se/sv/sa-fungerar-det/", note: "Välj parkeringszon och sluttid i appen. Express kan fungera utan konto." },
+  { id: "stockholm-parkering", label: "Stockholm Parkering", url: "https://www.stockholmparkering.se/parkeringar/betala-parkering/", note: "Se vilka appar och SMS-betalningar som gäller för anläggningen." },
+];
+const PARKING_PAYMENT_APP_URLS: Record<string, { ios: string; android: string }> = {
+  easypark: {
+    ios: "https://apps.apple.com/se/app/easypark-din-parkeringsapp/id449594317",
+    android: "https://play.google.com/store/apps/details?id=net.easypark.android",
+  },
+  parkster: {
+    ios: "https://apps.apple.com/se/app/parkster-smidig-parkering/id533140250",
+    android: "https://play.google.com/store/apps/details?id=se.parkster.client.android&hl=sv",
+  },
+
+};
+
+// Operatörslänkarna identifierades mot officiella appbutiker och operatörssidor.
+// De visas bara när platsens eget namn gör operatören trolig.
+const EV_OPERATOR_APPS: Record<string, EvOperator> = {
+  incharge: {
+    id: "incharge",
+    label: "Vattenfall InCharge",
+    ios: "https://apps.apple.com/se/app/vattenfall-incharge/id885790133",
+    android: "https://play.google.com/store/apps/details?id=nl.nuon.laadpunten&hl=en_US",
+    site: "https://incharge.vattenfall.se/ladda-pa-vagen/hitta-laddstationer",
+  },
+  mer: {
+    id: "mer",
+    label: "Mer",
+    ios: "https://apps.apple.com/se/app/mer-connect/id6468959214",
+    android: "https://play.google.com/store/apps/details?id=eco.mer.connect.app&hl=en_US",
+    site: "https://se.mer.eco/en/public-ev-charging/charging-map/",
+  },
+  recharge: {
+    id: "recharge",
+    label: "Recharge",
+    ios: "https://apps.apple.com/se/app/recharge/id6472725802",
+    android: "https://play.google.com/store/apps/details?id=no.recharge.app&hl=en_US",
+    site: "https://rechargeinfra.com/charging-map/",
+  },
+  edri: {
+    id: "edri",
+    label: "E.ON Drive Public",
+    ios: "https://apps.apple.com/se/app/e-on-drive-public/id6754163845",
+    android: "https://play.google.com/store/apps/details?id=com.edri.dk",
+    site: "https://www.edri.com/where-to-charge",
+  },
+  circlek: {
+    id: "circlek",
+    label: "Circle K Charge",
+    ios: "https://apps.apple.com/se/app/circle-k-charge/id1495777592",
+    android: "https://play.google.com/store/apps/details?id=com.circlek.ev",
+    site: "https://www.circlek.se/laddning/laddkarta",
+  },
+  okq8: {
+    id: "okq8",
+    label: "OKQ8 Elbilsladdning",
+    ios: "https://apps.apple.com/se/app/okq8-elbilsladdning/id1484918898",
+    android: "https://play.google.com/store/apps/details?id=com.okq8.elbilsladdning",
+    site: "https://www.okq8.se/elbilsladdning/ladda-pa-vagen/",
+  },
+  tesla: {
+    id: "tesla",
+    label: "Tesla",
+    ios: "https://apps.apple.com/us/app/tesla/id582007913",
+    android: "https://play.google.com/store/apps/details?id=com.teslamotors.tesla",
+    site: "https://www.tesla.com/findus/list/superchargers/Sweden",
+  },
+  ionity: {
+    id: "ionity",
+    label: "Ionity",
+    ios: "https://apps.apple.com/us/app/ionity/id1551448692",
+    android: "https://play.google.com/store/apps/details?id=com.cleevio.ionity.android.app",
+    site: "https://www.ionity.eu/network",
+  },
+  fastned: {
+    id: "fastned",
+    label: "Fastned",
+    ios: "https://apps.apple.com/us/app/fastned-ev-charging-app/id1485702761",
+    android: "https://play.google.com/store/apps/details?id=nl.fastned.my",
+    site: "https://www.fastnedcharging.com/en/locations",
+  },
+};
+
+function serviceDateInSeason(date: Date, season: ServiceSeason) {
+  const value = (date.getMonth() + 1) * 100 + date.getDate();
+  const start = season.startMonth * 100 + season.startDay;
+  const end = season.endMonth * 100 + season.endDay;
+  return start <= end ? value >= start && value <= end : value >= start || value <= end;
+}
+
+function isoWeekParity(date: Date): "even" | "odd" {
+  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const day = (target.getDay() + 6) % 7;
+  target.setDate(target.getDate() - day + 3);
+  const firstThursday = new Date(target.getFullYear(), 0, 4);
+  const firstDay = (firstThursday.getDay() + 6) % 7;
+  firstThursday.setDate(firstThursday.getDate() - firstDay + 3);
+  const week = 1 + Math.round((target.getTime() - firstThursday.getTime()) / (7 * 24 * 60 * 60 * 1000));
+  return week % 2 === 0 ? "even" : "odd";
+}
+
+function parseServiceSchedule(text: string): ServiceScheduleRule | null {
+  const cleaned = text.replace(/\s+/g, " ").replace(/[–—]/g, "-").trim();
+  if (!cleaned) return null;
+  const lower = normalize(cleaned);
+  const weekday = SERVICE_WEEKDAYS.findIndex((day) => lower.includes(day));
+  if (weekday < 0) return null;
+  const timeMatch = lower.match(/(\d{1,2})[.:](\d{2})\s*(?:-|till)\s*(\d{1,2})[.:](\d{2})/);
+  if (!timeMatch) return null;
+  const startHour = Number(timeMatch[1]);
+  const startMinute = Number(timeMatch[2]);
+  const endHour = Number(timeMatch[3]);
+  const endMinute = Number(timeMatch[4]);
+  if (startHour > 24 || endHour > 24 || startMinute > 59 || endMinute > 59) return null;
+  const rangePattern = /(\d{1,2})(?::e)?\s+([a-z]+)\s*(?:-|till)\s*(\d{1,2})(?::e)?\s+([a-z]+)/g;
+  let requiredRange: ServiceSeason | undefined;
+  let requiredParity: "even" | "odd" | undefined;
+  const exceptions: ServiceScheduleException[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = rangePattern.exec(lower)) !== null) {
+    const startMonth = SERVICE_MONTHS[match[2]];
+    const endMonth = SERVICE_MONTHS[match[4]];
+    const startDay = Number(match[1]);
+    const endDay = Number(match[3]);
+    if (!startMonth || !endMonth || startDay < 1 || startDay > 31 || endDay < 1 || endDay > 31) continue;
+    const range = { startMonth, startDay, endMonth, endDay };
+    const contextStart = Math.max(0, match.index - 80);
+    const context = lower.slice(contextStart, match.index + match[0].length + 20);
+    const excluded = /\butom\b/.test(lower.slice(contextStart, match.index));
+    const even = /\bjamna veck/.test(context);
+    const odd = /\budda veck/.test(context);
+    const parity = even === odd ? undefined : even ? "even" : "odd";
+    if (excluded) {
+      exceptions.push(parity ? { parity, range } : { range });
+    } else if (!requiredRange) {
+      requiredRange = range;
+      requiredParity = parity;
+    }
+  }
+  return {
+    weekday,
+    startMinutes: startHour * 60 + startMinute,
+    endMinutes: endHour * 60 + endMinute,
+    requiredRange,
+    requiredParity,
+    exceptions,
+  };
+}
+
+function getServiceSchedule(text?: string | null): ServiceScheduleRule | null {
+  if (!text) return null;
+  const cached = SERVICE_SCHEDULE_CACHE.get(text);
+  if (cached !== undefined) return cached;
+  const parsed = parseServiceSchedule(text);
+  SERVICE_SCHEDULE_CACHE.set(text, parsed);
+  return parsed;
+}
+
+function serviceDateIsActive(rule: ServiceScheduleRule, date: Date) {
+  if (rule.requiredRange && !serviceDateInSeason(date, rule.requiredRange)) return false;
+  if (rule.requiredParity && isoWeekParity(date) !== rule.requiredParity) return false;
+  return !rule.exceptions.some((exception) => {
+    if (exception.parity && isoWeekParity(date) !== exception.parity) return false;
+    if (exception.range && !serviceDateInSeason(date, exception.range)) return false;
+    return true;
+  });
+}
+
+function nextServiceOccurrence(text: string | null | undefined, from: Date, horizonHours = SERVICE_WARNING_HOURS): ServiceOccurrence | null {
+  const rule = getServiceSchedule(text);
+  if (!rule) return null;
+  const horizonMs = horizonHours * 60 * 60 * 1000;
+  const horizonEnd = from.getTime() + horizonMs;
+  const lastOffset = Math.max(2, Math.ceil(horizonHours / 24) + 1);
+  for (let offset = -1; offset <= lastOffset; offset += 1) {
+    const day = new Date(from);
+    day.setHours(0, 0, 0, 0);
+    day.setDate(day.getDate() + offset);
+    if (day.getDay() !== rule.weekday || !serviceDateIsActive(rule, day)) continue;
+    const start = new Date(day);
+    start.setHours(Math.floor(rule.startMinutes / 60), rule.startMinutes % 60, 0, 0);
+    const end = new Date(day);
+    end.setHours(Math.floor(rule.endMinutes / 60), rule.endMinutes % 60, 0, 0);
+    if (end.getTime() <= start.getTime()) end.setDate(end.getDate() + 1);
+    if (end.getTime() > from.getTime() && start.getTime() <= horizonEnd) return { start, end };
+  }
+  return null;
+}
+
+function findServiceWarningNear(places: ParkingPlace[], lat: number, lng: number, from: Date, horizonHours = SERVICE_WARNING_HOURS, maxKm = 0.075): { place: ParkingPlace; occurrence: ServiceOccurrence } | null {
+  let best: { place: ParkingPlace; occurrence: ServiceOccurrence } | null = null;
+  places.forEach((place) => {
+    if (!place.serviceText) return;
+    if (distanceKm([lat, lng], [place.lat, place.lng]) > maxKm) return;
+    const occurrence = nextServiceOccurrence(place.serviceText, from, horizonHours);
+    if (!occurrence) return;
+    if (!best || occurrence.start.getTime() < best.occurrence.start.getTime()) best = { place, occurrence };
+  });
+  return best;
+}
+
+function formatServiceOccurrence(occurrence: ServiceOccurrence, now: Date) {
+  const time = `${formatClock(occurrence.start)}–${formatClock(occurrence.end)}`;
+  if (occurrence.start.getTime() <= now.getTime() && occurrence.end.getTime() > now.getTime()) {
+    return `Pågår nu till ${formatClock(occurrence.end)}`;
+  }
+  const startDay = new Date(occurrence.start);
+  startDay.setHours(0, 0, 0, 0);
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  if (startDay.getTime() === today.getTime()) return `Idag ${time}`;
+  if (startDay.getTime() === tomorrow.getTime()) return `I morgon ${time}`;
+  return `${occurrence.start.toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long" })} ${time}`;
+}
+
+function residentPermitOf(text: string | null | undefined): ResidentPermitInfo | null {
+  if (!text) return null;
+  const lower = normalize(text);
+  const tariffMatch = lower.match(/\btaxa\s*([1-5])(?!\d)/);
+  const unavailable = /boende:\s*ingen/.test(lower);
+  const monthlyMatch = lower.match(/boende:\s*([\d\s]+)\s*kr\/manad/);
+  const dailyMatch = lower.match(/boende:\s*[\d\s]+\s*kr\/manad\s*eller\s*([\d\s]+)\s*kr\/dygn/);
+  const monthly = monthlyMatch ? Number(monthlyMatch[1].replace(/\s+/g, "")) : null;
+  const daily = dailyMatch ? Number(dailyMatch[1].replace(/\s+/g, "")) : null;
+  if (unavailable || (monthly !== null && Number.isFinite(monthly)) || (daily !== null && Number.isFinite(daily)) || tariffMatch) {
+    return {
+      monthly: monthly !== null && Number.isFinite(monthly) ? monthly : null,
+      daily: daily !== null && Number.isFinite(daily) ? daily : null,
+      unavailable,
+      tariff: tariffMatch ? Number(tariffMatch[1]) as TariffId : null,
+    };
+  }
+  return null;
+}
+
+function isResidentPermitPlace(place: ParkingPlace) {
+  const permit = residentPermitOf(place.priceText);
+  return !!permit && !permit.unavailable;
+}
+
+function officialDistrictOf(place: ParkingPlace) {
+  return place.area.replace(/^stockholms stad\s*·\s*/i, "").trim() || place.area;
+}
+
+function formatFeeAmount(total: number) {
+  const rounded = Math.round(total * 100) / 100;
+  return `${rounded.toLocaleString("sv-SE", {
+    minimumFractionDigits: Number.isInteger(rounded) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })} kr`;
+}
+
+function calculateTariffFee(tariff: TariffId, start: Date, end: Date): TariffFeeCalculation | null {
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end.getTime() <= start.getTime()) return null;
+  const maxMs = MAX_FEE_CALCULATION_DAYS * 24 * 60 * 60 * 1000;
+  const capped = end.getTime() - start.getTime() > maxMs;
+  const cappedEnd = new Date(capped ? start.getTime() + maxMs : end.getTime());
+  const stepMs = 5 * 60 * 1000;
+  const segments: TariffFeeSegment[] = [];
+  let total = 0;
+  let cursor = new Date(start.getTime());
+  while (cursor.getTime() < cappedEnd.getTime()) {
+    const next = new Date(Math.min(cursor.getTime() + stepMs, cappedEnd.getTime()));
+    const amount = getCurrentPrice(tariff, cursor).amount;
+    total += (amount * (next.getTime() - cursor.getTime())) / (60 * 60 * 1000);
+    const last = segments[segments.length - 1];
+    if (last && last.amount === amount && last.end.getTime() === cursor.getTime()) {
+      last.end = next;
+    } else {
+      segments.push({ start: new Date(cursor.getTime()), end: next, amount });
+    }
+    cursor = next;
+  }
+  return { total, segments, capped };
+}
+
+function toLocalDateTimeInput(date: Date) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function navigationLinks(lat: number, lng: number) {
+  const destination = encodeURIComponent(`${lat},${lng}`);
+  return {
+    google: `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=driving&dir_action=navigate`,
+    apple: `https://maps.apple.com/?daddr=${destination}&dirflg=d`,
+    waze: `https://waze.com/ul?ll=${destination}&navigate=yes`,
+  };
+}
+
+function openExternalUrl(url: string) {
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+function evConnectionGroups(type: string): EvConnectorFilter[] {
+  const text = normalize(type);
+  const groups = new Set<EvConnectorFilter>();
+  if (text.includes("type 2")) groups.add("type2");
+  if (text.includes("ccs")) groups.add("ccs");
+  if (text.includes("chademo")) groups.add("chademo");
+  if (text.includes("tesla")) groups.add("tesla");
+  return [...groups];
+}
+
+function evMaxPower(place: ParkingPlace) {
+  return (place.evConnections ?? []).reduce((max, connection) => Math.max(max, connection.powerKW || 0), 0);
+}
+
+function evOperatorForName(name: string): EvOperator | null {
+  const text = normalize(name);
+  if (text.includes("vattenfall") || text.includes("incharge")) return EV_OPERATOR_APPS.incharge;
+  if (/(^|[^a-z])(e\.?on|edri)([^a-z]|$)/.test(text)) return EV_OPERATOR_APPS.edri;
+  if (text.includes("circle k") || text.includes("circlek")) return EV_OPERATOR_APPS.circlek;
+  if (/(^|[^a-z0-9])okq8([^a-z0-9]|$)/.test(text)) return EV_OPERATOR_APPS.okq8;
+  if (/\brecharge\b/.test(text)) return EV_OPERATOR_APPS.recharge;
+  if (/(^|[^a-z0-9])mer([^a-z0-9]|$)/.test(text)) return EV_OPERATOR_APPS.mer;
+  if (text.includes("tesla")) return EV_OPERATOR_APPS.tesla;
+  if (text.includes("ionity")) return EV_OPERATOR_APPS.ionity;
+  if (text.includes("fastned")) return EV_OPERATOR_APPS.fastned;
+  return null;
 }
 
 function isTariffId(value: unknown): value is TariffId {
@@ -1051,6 +1423,7 @@ function categoryLabel(category: Category) {
   if (category === "disabled") return "Handikapp";
   if (category === "ev") return "Elbil";
   if (category === "mc") return "MC";
+  if (category === "resident") return "Boende";
   return "Alla parkeringar";
 }
 
@@ -1224,6 +1597,13 @@ function App() {
   const [allParking, setAllParking] = useState<ParkingPlace[]>(LOCAL_PARKING);
   const [category, setCategory] = useState<Category>("all");
   const [query, setQuery] = useState("");
+  const [serviceTonightOnly, setServiceTonightOnly] = useState(false);
+  const [residentDistrict, setResidentDistrict] = useState("all");
+  const [evMinPower, setEvMinPower] = useState(0);
+  const [evConnector, setEvConnector] = useState<EvConnectorFilter>("all");
+  const [calcTariff, setCalcTariff] = useState<TariffId>(3);
+  const [calcStartInput, setCalcStartInput] = useState(() => toLocalDateTimeInput(new Date()));
+  const [calcEndInput, setCalcEndInput] = useState(() => toLocalDateTimeInput(new Date(Date.now() + 3 * 60 * 60 * 1000)));
   const [searchLocations, setSearchLocations] = useState<SearchLocation[]>([]);
   const [searching, setSearching] = useState(false);
   const [areaLoading, setAreaLoading] = useState(false);
@@ -1254,7 +1634,7 @@ function App() {
   const [manualInstallHelp, setManualInstallHelp] = useState(false);
   const [favorites, setFavorites] = useState<ParkingPlace[]>(() => readLocalStorage(FAVORITES_STORAGE_KEY, []));
   const [favoritesOpen, setFavoritesOpen] = useState(false);
-  const [parkedCar, setParkedCar] = useState<ParkedCar | null>(() => readLocalStorage(PARKED_CAR_STORAGE_KEY, null));
+  const [parkedCar, setParkedCar] = useState<ParkedCar | null>(() => normalizeParkedCar(readLocalStorage<ParkedCar | null>(PARKED_CAR_STORAGE_KEY, null)));
   const [parkedCarOpen, setParkedCarOpen] = useState(false);
   const [parkedCarEditing, setParkedCarEditing] = useState(false);
   const [parkedCarNote, setParkedCarNote] = useState("");
@@ -1274,6 +1654,7 @@ function App() {
   // Tickar medan en bil är sparad så att nedräkningen och påminnelsen följer klockan.
   const [clock, setClock] = useState(() => Date.now());
   const parkingReminderFiredRef = useRef<number | null>(null);
+  const serviceReminderFiredRef = useRef<number | null>(null);
 
   useEffect(() => {
     routeInfoRef.current = routeInfo;
@@ -1288,13 +1669,14 @@ function App() {
     else localStorage.removeItem(PARKED_CAR_STORAGE_KEY);
   }, [parkedCar]);
 
-  // Klockan som nedräkningen och påminnelsen räknar mot. Intervallet finns bara när en
-  // bil är sparad, så appen står helt stilla annars.
+  // Klockan som nedräkningen, påminnelsen och Städnatt-filtret räknar mot.
+  // Utan sparad bil tickar den glesare – då behövs bara dagsaktuella servicetider.
   useEffect(() => {
-    if (!parkedCar) return;
-    const timer = window.setInterval(() => setClock(Date.now()), 20_000);
+    const intervalMs = parkedCar ? 20_000 : serviceTonightOnly ? 60_000 : 0;
+    if (!intervalMs) return;
+    const timer = window.setInterval(() => setClock(Date.now()), intervalMs);
     return () => window.clearInterval(timer);
-  }, [parkedCar]);
+  }, [parkedCar, serviceTonightOnly]);
 
   // Poster från äldre tolkningar av föreskriftsdatan läses aldrig mer men tar lagring –
   // rensa dem en gång per start i stället för att låta dem ligga kvar.
@@ -1377,35 +1759,43 @@ function App() {
       source: "local"
     };
   }, [clickedPosition, clickedAddress]);
+  const clickedNavigation = clickedPlace ? navigationLinks(clickedPlace.lat, clickedPlace.lng) : null;
 
   const showNotice = useCallback((message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(null), 3600);
   }, []);
 
+  // Systemnotiser fungerar bara när sidan är öppen. Det finns ingen serverbaserad
+  // push i den här versionen, så påminnelsen är en lokal notis medan appen körs.
+  const notifyParkedCar = useCallback((message: string, tag: string) => {
+    showNotice(message);
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification("Din parkerade bil", { body: message, tag });
+      }
+    } catch {
+      // Notiser är ett tillägg – appens egen ruta visas ändå.
+    }
+  }, [showNotice]);
+
   // Påminnelse: avgiftsändringar som rör gratis parkering är de som betyder något –
   // antingen att gratisperioden tar slut eller att den börjar.
   useEffect(() => {
     if (!parkedCar?.reminder || !parkedCarTariff) return;
+    const lead = reminderLeadOf(parkedCar);
     const now = new Date(clock);
     const boundary = nextFreeBoundary(parkedCarTariff, now);
     if (!boundary) return;
     const minutesLeft = (boundary.at.getTime() - now.getTime()) / 60_000;
-    if (minutesLeft > PARKING_REMINDER_LEAD_MINUTES || minutesLeft < 0) return;
+    if (minutesLeft > lead || minutesLeft < 0) return;
     if (parkingReminderFiredRef.current === boundary.at.getTime()) return;
     parkingReminderFiredRef.current = boundary.at.getTime();
     const message = boundary.amount === 0
       ? `Gratis parkering från ${formatClock(boundary.at)}.`
       : `Avgiften börjar ${formatClock(boundary.at)} med ${boundary.amount} kr/tim – flytta bilen eller betala.`;
-    showNotice(message);
-    try {
-      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-        new Notification("Din parkerade bil", { body: message, tag: "parksthlm-parked-car" });
-      }
-    } catch {
-      // Notiser är ett tillägg – appens egen ruta visas ändå.
-    }
-  }, [clock, parkedCar, parkedCarTariff, showNotice]);
+    notifyParkedCar(message, "parksthlm-parked-car");
+  }, [clock, notifyParkedCar, parkedCar, parkedCarTariff]);
 
   const fetchNearbyOsmParking = useCallback(async (scope: AreaScope) => {
     if (!navigator.onLine) return;
@@ -1787,7 +2177,7 @@ function App() {
     map.createPane("route");
     map.getPane("route")!.style.zIndex = "450";
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       crossOrigin: true,
       attribution: "&copy; OpenStreetMap-bidragsgivare",
@@ -1942,27 +2332,88 @@ function App() {
     if (category === "garage") return place.kind === "garage" || (place.kind === "surface" && place.name !== "Parkering" && (place.evSpaces ?? 0) === 0 && !place.free && place.priceText !== "Pris ej verifierat");
     if (category === "street") return place.kind === "street" || place.kind === "surface";
     if (category === "disabled") return (place.disabledSpaces ?? 0) > 0;
-    if (category === "ev") return (place.evSpaces ?? 0) > 0;
+    if (category === "ev") {
+      if ((place.evSpaces ?? 0) <= 0) return false;
+      if (evMinPower > 0) {
+        const connections = place.evConnections ?? [];
+        if (connections.length === 0 || evMaxPower(place) < evMinPower) return false;
+      }
+      if (evConnector !== "all") {
+        const connections = place.evConnections ?? [];
+        if (connections.length === 0) return false;
+        if (!connections.some((connection) => evConnectionGroups(connection.type).includes(evConnector))) return false;
+      }
+      return true;
+    }
     if (category === "mc") return (place.mcSpaces ?? 0) > 0;
+    if (category === "resident") return isResidentPermitPlace(place);
     return place.tariff === category;
-  }, [category]);
+  }, [category, evConnector, evMinPower]);
 
   const focusPosition = userPosition || searchPosition || viewCenter;
   const hasOfficialStreetData = allParking.some((place) => place.id.startsWith("stockholm-open-data-ptillaten-"));
   // Adressberikningen görs i en memo i stället för i en effekt som skriver tillbaka till
   // samma state – annars renderas hela trädet två gånger per datamängdsändring.
   const displayParking = useMemo(() => addNearbyStreetAddresses(allParking), [allParking]);
+  const serviceTonightByPlace = useMemo(() => {
+    if (!serviceTonightOnly) return null;
+    const now = new Date(clock);
+    const occurrences = new Map<string, ServiceOccurrence>();
+    displayParking.forEach((place) => {
+      if (!place.serviceText) return;
+      const occurrence = nextServiceOccurrence(place.serviceText, now, SERVICE_TONIGHT_HOURS);
+      if (occurrence) occurrences.set(place.id, occurrence);
+    });
+    return occurrences;
+  }, [clock, displayParking, serviceTonightOnly]);
+  const residentDistricts = useMemo(() => {
+    const districts = new Set<string>();
+    displayParking.forEach((place) => {
+      if (isResidentPermitPlace(place)) districts.add(officialDistrictOf(place));
+    });
+    return [...districts].sort((first, second) => first.localeCompare(second, "sv"));
+  }, [displayParking]);
   const filteredParking = useMemo(
     () => dedupeDisplayParking(
       displayParking.filter((place) =>
         !(hasOfficialStreetData && place.source === "local" && place.kind === "street")
         && (!limitToArea || !areaScope || isWithinArea(place, areaScope))
-        && matchesCategory(place),
+        && matchesCategory(place)
+        && (category !== "resident" || residentDistrict === "all" || officialDistrictOf(place) === residentDistrict)
+        && (!serviceTonightOnly || serviceTonightByPlace?.has(place.id)),
       ),
       category,
     ),
-    [areaScope, category, displayParking, hasOfficialStreetData, limitToArea, matchesCategory],
+    [areaScope, category, displayParking, hasOfficialStreetData, limitToArea, matchesCategory, residentDistrict, serviceTonightByPlace, serviceTonightOnly],
   );
+  const feeCalculation = useMemo(() => {
+    const start = new Date(calcStartInput);
+    const end = new Date(calcEndInput);
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) {
+      return { calculation: null as TariffFeeCalculation | null, error: "Välj både start och sluttid." };
+    }
+    if (end.getTime() <= start.getTime()) {
+      return { calculation: null as TariffFeeCalculation | null, error: "Sluttiden måste vara efter starttiden." };
+    }
+    return { calculation: calculateTariffFee(calcTariff, start, end), error: null as string | null };
+  }, [calcEndInput, calcStartInput, calcTariff]);
+  const parkedCarServiceWarning = useMemo(() => {
+    if (!parkedCar) return null;
+    return findServiceWarningNear(displayParking, parkedCar.lat, parkedCar.lng, new Date(clock), SERVICE_WARNING_HOURS);
+  }, [clock, displayParking, parkedCar]);
+
+  useEffect(() => {
+    if (!parkedCar?.reminder || !parkedCarServiceWarning) return;
+    const leadMs = reminderLeadOf(parkedCar) * 60 * 1000;
+    const msLeft = parkedCarServiceWarning.occurrence.start.getTime() - clock;
+    if (msLeft < 0 || msLeft > leadMs) return;
+    if (serviceReminderFiredRef.current === parkedCarServiceWarning.occurrence.start.getTime()) return;
+    serviceReminderFiredRef.current = parkedCarServiceWarning.occurrence.start.getTime();
+    notifyParkedCar(
+      `Servicetid ${formatServiceOccurrence(parkedCarServiceWarning.occurrence, new Date(clock))}: ${parkedCarServiceWarning.place.address}. Flytta bilen i tid.`,
+      "parksthlm-service-warning",
+    );
+  }, [clock, notifyParkedCar, parkedCar, parkedCarServiceWarning]);
   const selectedParkingTariff = selectedParking && isTariffId(selectedParking.tariff) ? selectedParking.tariff : null;
   const selectedParkingCopy = selectedParking ? placeListCopy(selectedParking) : null;
   // Föreskrivna taxor utanför appens taxa 1–5 (taxa 11–14 m.m.) beskrivs med en hel
@@ -1971,6 +2422,14 @@ function App() {
   const selectedParkingOfficialRate = selectedParking && !selectedParking.free && !selectedParkingTariff
     && selectedParking.priceText.length > 40
     ? selectedParking.priceText
+    : null;
+  const selectedNavigation = selectedParking ? navigationLinks(selectedParking.lat, selectedParking.lng) : null;
+  const selectedResidentPermit = selectedParking ? residentPermitOf(selectedParking.priceText) : null;
+  const selectedServiceOccurrence = selectedParking?.serviceText
+    ? nextServiceOccurrence(selectedParking.serviceText, new Date(clock), 7 * 24)
+    : null;
+  const selectedEvOperator = selectedParking && (selectedParking.evSpaces ?? 0) > 0
+    ? evOperatorForName(selectedParking.name)
     : null;
 
   const loadParkingAround = useCallback(async (nextCategory: Category = category, requestedScope?: AreaScope) => {
@@ -1996,6 +2455,8 @@ function App() {
         } else if (nextCategory === "ev") {
           await Promise.all([fetchEvCharging(), fetchOcmCharging(), fetchNobilCharging()]);
         } else if (nextCategory === "street") {
+          count = await fetchAllOfficialRuleParking(["ptillaten"]);
+        } else if (nextCategory === "resident") {
           count = await fetchAllOfficialRuleParking(["ptillaten"]);
         } else {
           const counts = await Promise.all([
@@ -2057,7 +2518,7 @@ function App() {
       ? ["pmotorcykel"]
       : category === "disabled"
         ? ["prorelsehindrad"]
-        : category === "all" || category === "street" || category === "free" || typeof category === "number"
+        : category === "all" || category === "street" || category === "free" || category === "resident" || typeof category === "number"
           ? ["ptillaten"]
           : [];
     try {
@@ -2163,8 +2624,14 @@ function App() {
       const cellSize = 0.0025;
       const usedCells = new Set<string>();
       markerPlaces = [...markerPlaces]
-        .sort((first, second) => markerPriority(first) - markerPriority(second)
-          || distanceKm(viewCenter, [first.lat, first.lng]) - distanceKm(viewCenter, [second.lat, second.lng]))
+        .sort((first, second) => {
+          if (serviceTonightOnly && serviceTonightByPlace) {
+            const serviceOrder = Number(!serviceTonightByPlace.has(first.id)) - Number(!serviceTonightByPlace.has(second.id));
+            if (serviceOrder !== 0) return serviceOrder;
+          }
+          return markerPriority(first) - markerPriority(second)
+            || distanceKm(viewCenter, [first.lat, first.lng]) - distanceKm(viewCenter, [second.lat, second.lng]);
+        })
         .filter((place) => {
           const cell = `${Math.floor(place.lat / cellSize)}:${Math.floor(place.lng / cellSize)}`;
           if (usedCells.has(cell)) return false;
@@ -2189,7 +2656,7 @@ function App() {
         })
         .addTo(layer);
     });
-  }, [category, filteredParking, mapZoom, selectedParking, viewCenter]);
+  }, [category, filteredParking, mapZoom, selectedParking, serviceTonightByPlace, serviceTonightOnly, viewCenter]);
 
   const selectCategory = (next: Category, fit = false) => {
     setCategory(next);
@@ -2251,6 +2718,18 @@ function App() {
     if (["mc", "motorcykel", "mc parkering", "motorcykelparkering"].includes(normalize(value))) {
       selectCategory("mc");
       setQuery("");
+      return;
+    }
+    if (["boende", "boendeparkering", "resident"].includes(normalize(value))) {
+      selectCategory("resident");
+      setQuery("");
+      return;
+    }
+    if (["stadnatt", "servicetid", "servicedag", "service"].includes(normalize(value))) {
+      setServiceTonightOnly(true);
+      setPanelOpen(true);
+      setQuery("");
+      showNotice("Visar gator med tolkad servicetid inom det närmaste dygnet");
       return;
     }
 
@@ -2690,26 +3169,38 @@ function App() {
   }, [parkedCarCandidate.lat, parkedCarCandidate.lng, parkedCarCandidate.source, parkedCarCandidateTariff, selectedParking]);
 
   const saveParkedCar = () => {
+    const savedAt = Date.now();
+    const candidateWarning = findServiceWarningNear(
+      displayParking,
+      parkedCarCandidate.lat,
+      parkedCarCandidate.lng,
+      new Date(savedAt),
+      SERVICE_WARNING_HOURS,
+    );
     setParkedCar({
       ...parkedCarCandidate,
-      savedAt: Date.now(),
+      savedAt,
       note: parkedCarNote.trim(),
       spot: parkedCarSpot.trim(),
       tariff: parkedCarCandidateTariff,
       tariffLabel: parkedCarCandidateLabel,
       // Påminnelsevalet följer med mellan parkeringar – den som vill ha påminnelse vill ha det varje gång.
       reminder: parkedCar?.reminder ?? false,
+      reminderLead: reminderLeadOf(parkedCar),
     });
     setParkedCarEditing(false);
-    showNotice(parkedCarCandidateTariff
+    const savedMessage = parkedCarCandidateTariff
       ? `Bilens plats sparades · ${getCurrentPrice(parkedCarCandidateTariff).label}`
-      : "Bilens plats sparades");
+      : "Bilens plats sparades";
+    showNotice(candidateWarning
+      ? `${savedMessage} · Servicetid ${formatServiceOccurrence(candidateWarning.occurrence, new Date(savedAt))}: ${candidateWarning.place.address}`
+      : savedMessage);
   };
 
   const toggleParkingReminder = () => {
     if (!parkedCar) return;
     const next = !parkedCar.reminder;
-    setParkedCar({ ...parkedCar, reminder: next });
+    setParkedCar({ ...parkedCar, reminder: next, reminderLead: reminderLeadOf(parkedCar) });
     if (!next) {
       showNotice("Påminnelsen är avstängd");
       return;
@@ -2721,7 +3212,15 @@ function App() {
     } catch {
       // Utan stöd för notiser används appens egen ruta.
     }
-    showNotice(`Påminnelse på · ${PARKING_REMINDER_LEAD_MINUTES} min innan avgiften ändras`);
+    showNotice(`Påminnelse på · ${reminderLeadOf(parkedCar)} min innan avgiften ändras eller servicetiden börjar`);
+  };
+
+  const setReminderLead = (lead: ReminderLeadMinutes) => {
+    if (!parkedCar) return;
+    setParkedCar({ ...parkedCar, reminder: true, reminderLead: lead });
+    parkingReminderFiredRef.current = null;
+    serviceReminderFiredRef.current = null;
+    showNotice(`Påminnelse ${lead} min innan avgiften ändras eller servicetiden börjar`);
   };
 
   const parkedCarAsPlace = parkedCar ? {
@@ -2802,8 +3301,17 @@ function App() {
     return amounts;
   }, [clock, resultSort]);
 
+  const sortOptions = category === "ev" ? EV_RESULT_SORTS : RESULT_SORTS;
+
+  useEffect(() => {
+    if (category !== "ev" && resultSort === "power") setResultSort("distance");
+  }, [category, resultSort]);
+
   const sortedResults = useMemo(() => {
     if (resultSort === "distance") return searchMatches;
+    if (resultSort === "power") {
+      return [...searchMatches].sort((first, second) => evMaxPower(second.place) - evMaxPower(first.place) || first.distance - second.distance);
+    }
     const amountOf = (place: ParkingPlace) => {
       if (place.free) return 0;
       // Okarterad taxa sorteras sist i stället för att hamna överst som "0 kr".
@@ -2818,7 +3326,7 @@ function App() {
     return sorted;
   }, [priceNowByTariff, resultSort, searchMatches]);
 
-  const resultKey = `${category}|${query}|${limitToArea ? areaScope?.label ?? "" : ""}`;
+  const resultKey = `${category}|${query}|${limitToArea ? areaScope?.label ?? "" : ""}|${serviceTonightOnly ? "service" : "all"}|${residentDistrict}|${evMinPower}|${evConnector}|${resultSort}`;
   const resultLimit = resultWindow.key === resultKey ? resultWindow.limit : RESULTS_PAGE_SIZE;
   const visibleResults = sortedResults.slice(0, resultLimit);
   const hiddenResultCount = sortedResults.length - visibleResults.length;
@@ -2875,6 +3383,8 @@ function App() {
           <button className={category === "disabled" ? "active" : ""} onClick={() => selectCategory("disabled")} type="button">Handikapp</button>
           <button className={category === "ev" ? "active" : ""} onClick={() => selectCategory("ev")} type="button">Elbil</button>
           <button className={category === "mc" ? "active" : ""} onClick={() => selectCategory("mc")} type="button"><Bike size={15} /> MC</button>
+          <button className={category === "resident" ? "active" : ""} onClick={() => selectCategory("resident")} type="button">Boende</button>
+          <button className={serviceTonightOnly ? "active" : ""} onClick={() => { setServiceTonightOnly((active) => !active); setPanelOpen(true); }} type="button" aria-pressed={serviceTonightOnly}><Clock3 size={15} /> Städnatt</button>
           <button className="filter-button" onClick={() => setFiltersOpen((open) => !open)} type="button" aria-expanded={filtersOpen}>
             <SlidersHorizontal size={15} /> Taxor <ChevronDown size={14} />
           </button>
@@ -2910,6 +3420,56 @@ function App() {
               <button type="button" className={`street-toggle ${category === "street" ? "active" : ""}`} onClick={() => selectCategory("street")}>
                 <Route size={16} /> Visa endast gatu- och markparkering
               </button>
+              {category === "resident" && residentDistricts.length > 0 ? (
+                <div className="resident-filter">
+                  <label>
+                    <span>Boendeområde</span>
+                    <select value={residentDistrict} onChange={(event) => setResidentDistrict(event.target.value)} aria-label="Välj boendeområde">
+                      <option value="all">Alla boendeområden</option>
+                      {residentDistricts.map((district) => (
+                        <option key={district} value={district}>{district}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <small>Områdena kommer från stadsdelsnamnen i föreskrifterna. Boendetaxan visas per plats eftersom den kan skilja sig mellan taxor.</small>
+                </div>
+              ) : null}
+              <div className="fee-calculator" aria-label="P-avgiftskalkylator">
+                <div className="filter-heading"><span>P-avgiftskalkylator</span><small>Exakt timpris</small></div>
+                <div className="calculator-inputs">
+                  <label><span>Från</span><input type="datetime-local" value={calcStartInput} onChange={(event) => setCalcStartInput(event.target.value)} aria-label="Beräkna från" /></label>
+                  <label><span>Till</span><input type="datetime-local" value={calcEndInput} onChange={(event) => setCalcEndInput(event.target.value)} aria-label="Beräkna till" /></label>
+                  <label><span>Taxa</span>
+                    <select value={calcTariff} onChange={(event) => setCalcTariff(Number(event.target.value) as TariffId)} aria-label="Välj taxa för kalkylatorn">
+                      {([1, 2, 3, 4, 5] as TariffId[]).map((tariff) => (
+                        <option key={tariff} value={tariff}>Taxa {tariff}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                {feeCalculation.error ? (
+                  <p className="calculator-error">{feeCalculation.error}</p>
+                ) : feeCalculation.calculation ? (
+                  <>
+                    <p className="calculator-total">Beräknad avgift <strong>{formatFeeAmount(feeCalculation.calculation.total)}</strong></p>
+                    <ul className="calculator-segments">
+                      {feeCalculation.calculation.segments.slice(0, 12).map((segment, index) => (
+                        <li key={`${segment.start.getTime()}-${index}`}>
+                          <span>{formatClock(segment.start)}–{formatClock(segment.end)}</span>
+                          <strong>{segment.amount === 0 ? "Gratis" : `${segment.amount} kr/tim`}</strong>
+                        </li>
+                      ))}
+                    </ul>
+                    {feeCalculation.calculation.segments.length > 12 ? (
+                      <small className="calculator-more">Dessutom {feeCalculation.calculation.segments.length - 12} prisperioder.</small>
+                    ) : null}
+                    {feeCalculation.calculation.capped ? (
+                      <p className="calculator-error">Intervallet kapades till {MAX_FEE_CALCULATION_DAYS} dagar.</p>
+                    ) : null}
+                  </>
+                ) : null}
+                <small className="calculator-note">Beräknas på taxans timpris i fem minuters steg. Betalningsappar kan avrunda uppåt och max tid kan vara kortare.</small>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -2999,8 +3559,33 @@ function App() {
                 </button>
               </div>
 
+              {category === "ev" ? (
+                <div className="ev-advanced" aria-label="Avancerat elbilfilter">
+                  <label><span>Min effekt</span>
+                    <select value={evMinPower} onChange={(event) => setEvMinPower(Number(event.target.value))} aria-label="Filtrera på minsta laddeffekt">
+                      <option value={0}>Alla effekter</option>
+                      <option value={11}>minst 11 kW</option>
+                      <option value={22}>minst 22 kW</option>
+                      <option value={50}>Snabbladdare, minst 50 kW</option>
+                      <option value={150}>minst 150 kW</option>
+                    </select>
+                  </label>
+                  <label><span>Kontakt</span>
+                    <select value={evConnector} onChange={(event) => setEvConnector(event.target.value as EvConnectorFilter)} aria-label="Filtrera på laddkontakt">
+                      <option value="all">Alla kontakter</option>
+                      <option value="type2">Type 2</option>
+                      <option value="ccs">CCS</option>
+                      <option value="chademo">CHAdeMO</option>
+                      <option value="tesla">Tesla</option>
+                    </select>
+                  </label>
+                </div>
+              ) : null}
+              {category === "ev" && (evMinPower > 0 || evConnector !== "all") ? (
+                <p className="ev-advanced-note">Platser utan kontaktuppgifter visas inte när effekt eller kontakt är vald.</p>
+              ) : null}
               <div className="results-sort" role="group" aria-label="Sortera parkeringslistan">
-                {RESULT_SORTS.map((option) => (
+                {sortOptions.map((option) => (
                   <button
                     key={option.value}
                     type="button"
@@ -3017,6 +3602,7 @@ function App() {
                 {visibleResults.map(({ place, distance }, index) => {
                   const copy = placeListCopy(place);
                   const freeNow = isFreeNow(place, priceNowByTariff);
+                  const serviceOccurrence = serviceTonightByPlace?.get(place.id);
                   return (
                   <motion.button
                     type="button"
@@ -3036,6 +3622,7 @@ function App() {
                       <span>
                         <b className={freeNow ? "free" : ""}>{place.free ? "Avgiftsfri" : freeNow ? "Gratis nu" : placeTariffLabel(place)}</b>
                         <i>{placeKindLabel(place)}</i>
+                        {serviceOccurrence ? <em className="service-warning">{formatServiceOccurrence(serviceOccurrence, new Date(clock))}</em> : null}
                       </span>
                     </span>
                     <span className="result-distance">{formatDistance(distance)}<Navigation size={14} /></span>
@@ -3055,7 +3642,7 @@ function App() {
                   <div className="empty-results">
                     <Search size={25} />
                     <strong>Ingen parkering matchar</strong>
-                    <span>Prova en adress eller välj ett annat filter.</span>
+                    <span>{serviceTonightOnly ? "Ingen tolkad servicetid börjar inom det närmaste dygnet i det här urvalet. Stäng av Städnatt för att se alla platser." : category === "resident" ? "Inga boendeplatser matchar det valda området. Välj ett annat boendeområde eller Alla boendeområden." : "Prova en adress eller välj ett annat filter."}</span>
                   </div>
                 )}
               </div>
@@ -3146,9 +3733,23 @@ function App() {
                     </div>
                   ))}
                   {!selectedParking.evConnections ? <span className="place-ev-missing">Ingen detaljerad information om laddkontakter finns tillgänglig för denna plats.</span> : null}
+                  {selectedEvOperator ? (
+                    <div className="place-ev-operator">
+                      <small>Trolig operatör</small>
+                      <strong>{selectedEvOperator.label}</strong>
+                      <div className="operator-actions">
+                        <button type="button" onClick={() => openExternalUrl(selectedEvOperator.site)}><ExternalLink size={15} /> Operatörens karta</button>
+                        <button type="button" onClick={() => openExternalUrl(isIosDevice() ? selectedEvOperator.ios : selectedEvOperator.android)}><ExternalLink size={15} /> {isIosDevice() ? "App Store" : "Google Play"}</button>
+                      </div>
+                      <span>Operatören sköter laddning och betalning. Parkeringsregler kan vara separata.</span>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
+            {selectedParking.source === "api" && selectedParking.kind === "garage" ? (
+              <p className="occupancy-note"><strong>Beläggning:</strong> live saknas i öppna data. Kapaciteten ovan är total kapacitet, inte lediga platser just nu.</p>
+            ) : null}
             {selectedParkingOfficialRate ? (
               <div className="rate-card">
                 <CircleAlert size={17} />
@@ -3164,21 +3765,62 @@ function App() {
                 <div>
                   <small>Städgata / servicetid</small>
                   <strong>{selectedParking.serviceText}</strong>
-                  <span>Gäller den markerade gatusträckan. Kontrollera alltid vägmärket på plats.</span>
+                  {selectedServiceOccurrence ? (
+                    <span>{`Nästa tolkade tillfälle: ${formatServiceOccurrence(selectedServiceOccurrence, new Date(clock))}. Gäller den markerade gatusträckan.`}</span>
+                  ) : (
+                    <span>Schemat kunde inte tolkas automatiskt. Gäller den markerade gatusträckan.</span>
+                  )}
+                  <span>Kontrollera alltid vägmärket på plats.</span>
+                </div>
+              </div>
+            ) : null}
+            {selectedResidentPermit ? (
+              <div className="rate-card resident-card">
+                <MapPin size={17} />
+                <div>
+                  <small>Boendeparkering enligt föreskriften</small>
+                  <strong>{selectedResidentPermit.unavailable ? "Ingen boendeparkering på den här platsen" : `${selectedResidentPermit.monthly ?? "–"} kr/månad eller ${selectedResidentPermit.daily ?? "–"} kr/dygn`}</strong>
+                  <span>Tillståndskrav och område kontrolleras mot skyltningen. Taxan kommer från föreskriftstexten i appen.</span>
                 </div>
               </div>
             ) : null}
             <p className="place-note"><CircleAlert size={15} />{selectedParkingTariff ? TARIFFS[selectedParkingTariff].hours : selectedParking.note}</p>
+            {(selectedParkingTariff || selectedParking.source === "api") && selectedNavigation ? (
+              <div className="payment-card">
+                <small>Betala parkering</small>
+                <strong>{selectedParkingTariff ? `Taxa ${selectedParkingTariff} – välj rätt zonkod i appen` : "Kontrollera anläggningens betalningsapp"}</strong>
+                <div className="payment-actions">
+                  {PARKING_PAYMENT_PROVIDERS.map((provider) => (
+                    <button key={provider.id} type="button" title={provider.note} onClick={() => openExternalUrl(provider.url)}>
+                      <ExternalLink size={15} /> {provider.label}
+                    </button>
+                  ))}
+                  {["easypark", "parkster"].map((providerId) => (
+                    <button key={`${providerId}-app`} type="button" onClick={() => openExternalUrl(isIosDevice() ? PARKING_PAYMENT_APP_URLS[providerId].ios : PARKING_PAYMENT_APP_URLS[providerId].android)}>
+                      <ExternalLink size={15} /> {providerId === "easypark" ? "EasyPark" : "Parkster"}-appen
+                    </button>
+                  ))}
+                </div>
+                <span>Betala P är nedlagd sedan 2024. Stödet kan skilja sig mellan gator och anläggningar – zonkoden på skylten avgör.</span>
+              </div>
+            ) : null}
             <div className="place-actions">
               <button type="button" className="primary-action" onClick={() => void buildRoute(selectedParking)} disabled={routeLoading}>
                 {routeLoading ? <RefreshCw className="spin" size={18} /> : <Navigation size={18} />} Navigera hit
               </button>
-              <button type="button" onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${selectedParking.lat},${selectedParking.lng}&travelmode=driving`, "_blank", "noopener,noreferrer")}>
-                <ExternalLink size={17} /> Google
-              </button>
-              <button type="button" onClick={() => window.open(`https://waze.com/ul?ll=${selectedParking.lat},${selectedParking.lng}&navigate=yes`, "_blank", "noopener,noreferrer")}>
-                <CarFront size={17} /> Waze
-              </button>
+              {selectedNavigation ? (
+                <>
+                  <button type="button" onClick={() => openExternalUrl(selectedNavigation.google)}>
+                    <ExternalLink size={17} /> Google
+                  </button>
+                  <button type="button" onClick={() => openExternalUrl(selectedNavigation.apple)}>
+                    <MapPin size={17} /> Apple
+                  </button>
+                  <button type="button" onClick={() => openExternalUrl(selectedNavigation.waze)}>
+                    <CarFront size={17} /> Waze
+                  </button>
+                </>
+              ) : null}
             </div>
             <div className="place-utility-actions">
               <button type="button" className={isFavorite(selectedParking) ? "is-favorite" : ""} onClick={() => toggleFavorite(selectedParking)}>
@@ -3235,16 +3877,37 @@ function App() {
               </div>
             </div>
             <p className="place-note"><CircleAlert size={15} />{clickedPlace.note}</p>
+            {clickedPlace.tariff && clickedNavigation ? (
+              <div className="payment-card">
+                <small>Betala parkering</small>
+                <strong>{`Taxa ${clickedPlace.tariff} – välj rätt zonkod i appen`}</strong>
+                <div className="payment-actions">
+                  {PARKING_PAYMENT_PROVIDERS.map((provider) => (
+                    <button key={provider.id} type="button" title={provider.note} onClick={() => openExternalUrl(provider.url)}>
+                      <ExternalLink size={15} /> {provider.label}
+                    </button>
+                  ))}
+                </div>
+                <span>Zonkoden på skylten avgör vilken app som gäller här.</span>
+              </div>
+            ) : null}
             <div className="place-actions">
               <button type="button" className="primary-action" onClick={() => void buildRoute(clickedPlace)} disabled={routeLoading}>
                 {routeLoading ? <RefreshCw className="spin" size={18} /> : <Navigation size={18} />} Navigera hit
               </button>
-              <button type="button" onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${clickedPlace.lat},${clickedPlace.lng}&travelmode=driving`, "_blank", "noopener,noreferrer")}>
-                <ExternalLink size={17} /> Google
-              </button>
-              <button type="button" onClick={() => window.open(`https://waze.com/ul?ll=${clickedPlace.lat},${clickedPlace.lng}&navigate=yes`, "_blank", "noopener,noreferrer")}>
-                <CarFront size={17} /> Waze
-              </button>
+              {clickedNavigation ? (
+                <>
+                  <button type="button" onClick={() => openExternalUrl(clickedNavigation.google)}>
+                    <ExternalLink size={17} /> Google
+                  </button>
+                  <button type="button" onClick={() => openExternalUrl(clickedNavigation.apple)}>
+                    <MapPin size={17} /> Apple
+                  </button>
+                  <button type="button" onClick={() => openExternalUrl(clickedNavigation.waze)}>
+                    <CarFront size={17} /> Waze
+                  </button>
+                </>
+              ) : null}
             </div>
           </motion.aside>
         )}
@@ -3325,14 +3988,42 @@ function App() {
                     <span className="car-price-next">{parkedCarStatus}</span>
                     {parkedCar.tariffLabel && <small>{parkedCar.tariffLabel}</small>}
                   </div>
-                  {parkedCarFreeBoundary ? (
-                    <button type="button" className={`reminder-toggle ${parkedCar.reminder ? "is-on" : ""}`} aria-pressed={parkedCar.reminder} onClick={toggleParkingReminder}>
-                      {parkedCar.reminder ? <BellRing size={17} /> : <Bell size={17} />}
-                      <span>
-                        {parkedCar.reminder ? "Påminnelse är på" : "Påminn mig innan avgiften ändras"}
-                        <small>{parkedCar.reminder ? `Varnar ${PARKING_REMINDER_LEAD_MINUTES} min innan gratisperioden tar slut eller avgiften börjar` : "Du får en notis innan gratisperioden tar slut"}</small>
-                      </span>
-                    </button>
+                  {parkedCarServiceWarning ? (
+                    <div className="service-day-card">
+                      <Clock3 size={18} />
+                      <div>
+                        <small>Servicetid nära bilen</small>
+                        <strong>{formatServiceOccurrence(parkedCarServiceWarning.occurrence, new Date(clock))}</strong>
+                        <span>{parkedCarServiceWarning.place.address} · {parkedCarServiceWarning.place.serviceText}</span>
+                        <span>Närmaste tolkade servicetid inom 75 meter. Kontrollera alltid vägmärket på plats.</span>
+                      </div>
+                    </div>
+                  ) : null}
+                  {parkedCarFreeBoundary || parkedCarServiceWarning ? (
+                    <>
+                      <button type="button" className={`reminder-toggle ${parkedCar.reminder ? "is-on" : ""}`} aria-pressed={parkedCar.reminder} onClick={toggleParkingReminder}>
+                        {parkedCar.reminder ? <BellRing size={17} /> : <Bell size={17} />}
+                        <span>
+                          {parkedCar.reminder ? "Påminnelse är på" : parkedCarFreeBoundary ? "Påminn mig innan avgiften ändras" : "Påminn mig innan servicetiden börjar"}
+                          <small>{parkedCar.reminder ? `Varnar ${reminderLeadOf(parkedCar)} min innan avgiften ändras eller servicetiden börjar. Appen måste vara öppen för systemnotisen.` : "Du får en notis i appen innan det händer."}</small>
+                        </span>
+                      </button>
+                      {parkedCar.reminder ? (
+                        <div className="reminder-leads" role="group" aria-label="Välj framförhållning för påminnelsen">
+                          {REMINDER_LEAD_OPTIONS.map((lead) => (
+                            <button
+                              key={lead}
+                              type="button"
+                              className={reminderLeadOf(parkedCar) === lead ? "active" : ""}
+                              aria-pressed={reminderLeadOf(parkedCar) === lead}
+                              onClick={() => setReminderLead(lead)}
+                            >
+                              {lead} min
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </>
                   ) : null}
                   <div className="parked-car-details">
                     <div><small>Plats</small><strong>{parkedCar.address}</strong><span>{parkedCar.lat.toFixed(5)}, {parkedCar.lng.toFixed(5)}</span></div>
@@ -3401,6 +4092,11 @@ function App() {
               <div className="info-list">
                 <div><strong>Taxedata</strong><span>Prisnivåer och tider baseras på Stockholms stads publicerade taxor. Helgdagar och lokala avvikelser kan förekomma.</span></div>
                 <div><strong>Live-parkering</strong><span>Kompletteras online från OpenStreetMap och sparas i telefonen för senare användning.</span></div>
+                <div><strong>Servicetider</strong><span>Städnatt-filtret visar bara servicetider som kan tolkas maskinellt och börjar inom ett dygn. Sparade bilar varnas upp till 48 timmar i förväg. Vägmärket gäller alltid.</span></div>
+                <div><strong>Boende</strong><span>Boendefiltret använder boendetaxan i föreskriftstexten. Tillståndets område och krav måste kontrolleras mot skyltning och stadens tillståndsregler.</span></div>
+                <div><strong>Betalning</strong><span>Betala P är nedlagd. Platskortet länkar till officiella guider för EasyPark, Parkster och Stockholm Parkering eftersom zonkoden på skylten avgör.</span></div>
+                <div><strong>Beläggning</strong><span>Inget öppet liveflöde för lediga platser hittades. Garage visar därför kapacitet, men inte grön/gul/röd beläggning.</span></div>
+                <div><strong>Påminnelser</strong><span>Påminnelser är lokala och kräver att appen är öppen. Det finns ingen serverbaserad push i den här versionen.</span></div>
                 <div><strong>Offline</strong><span>App, taxor, lokala parkeringar, GPS och besökta kartvyer fungerar utan nät. Ny adressökning och vägrutt kräver internet.</span></div>
               </div>
               <div className="warning-box"><CircleAlert size={18} /><span><strong>Viktigt:</strong> Vägmärken och skyltning på plats gäller alltid före kartan. Kontrollera även servicedag, max tid och eventuella tillståndskrav.</span></div>

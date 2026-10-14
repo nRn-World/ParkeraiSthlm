@@ -42,19 +42,44 @@ Appen visar Stockholms stads officiella fem taxeområden (Taxa 1–5) med korrek
 ### 📍 GPS & Navigering
 - Hitta din nuvarande position med ett klick
 - Beräkna bilväg med restid och avstånd till valfri parkering
-- Öppna destination direkt i **Google Maps** eller **Waze** för röstnavigering
+- Öppna destination direkt i **Google Maps**, **Apple Maps** eller **Waze** för röstnavigering
 
 ### 🔍 Smart sökning
 - Sök på adress, gata, område eller taxa
-- Snabbfilter: Garage, Gatuparkering, Gratis, Taxa 1–5
-- Listan kan sorteras på **närmast**, **billigast** eller **gratis nu**, och "Visa fler" fortsätter bortom de första 20 träffarna
+- Snabbfilter: Garage, Gatuparkering, Gratis, Boende, Städnatt och Taxa 1–5
+- Listan kan sorteras på **närmast**, **billigast** eller **gratis nu** (elbilar kan även sorteras på **starkast**), och "Visa fler" fortsätter bortom de första 20 träffarna
 - Rubriken i listan är gatunamnet; föreskriftstypen (t.ex. "P-avgift endast besök") visas som etikett
 - Föreskriftstaxor utanför taxa 1–5 visas som **belopp** i listan, och hela skrivningen samlas i ett eget kort i platskortet
+
+### 🧹 Servicetider och städnätter
+- **Städnatt** visar gator med maskinläsbar servicetid som börjar inom ett dygn
+- Sparad bil varnar om en tolkad servicetid börjar inom 48 timmar
+- Otolkbara scheman visas, men tolkas inte automatiskt; vägmärket gäller alltid
+
+### 🏠 Boendeparkering
+- **Boende** filtrerar platser med boendetaxa i föreskriftstexten
+- Välj boendeområde från stadsdelsnamnen i föreskrifterna
+- Platskortet visar boendetaxa per månad/dygn där föreskriften anger den
+
+### 🧮 P-avgiftskalkylator
+- Välj start, sluttid och taxa 1–5
+- Beräknar totalen från taxans timpris i fem minuters steg, inklusive gratisperioder
+- Visar prisperioder; betalningsappar kan avrunda annorlunda
+
+### ⚡ Elbil och laddning
+- Filtrera på minsta effekt och kontakt: Type 2, CCS, CHAdeMO eller Tesla
+- Troliga operatörer länkas till operatörens karta och officiella app
+- Platser utan kontaktuppgifter filtreras bort när effekt eller kontakt väljs
+
+### 💳 Betalning
+- Platskort länkar till officiella guider för EasyPark, Parkster och Stockholm Parkering
+- Betala P är nedlagd; zonkoden på skylten avgör vilken app som gäller
+- Inga zonkoder gissas i appen
 
 ### 🚗 Min parkerade bil
 - Spara var bilen står (GPS, vald parkering eller valfri kartpunkt) med plats och anteckning
 - Taxan på platsen sparas vid tillfället: kortet visar **pris nu**, när avgiften ändras och en nedräkning till dess
-- Valfri påminnelse som varnar 15 minuter innan gratisperioden tar slut eller avgiften börjar (notis i appen, och systemnotis där webbläsaren tillåter). Den erbjuds bara på taxor där avgiftsläget faktiskt skiftar
+- Valfri påminnelse 15 eller 30 minuter innan gratisperioden tar slut, avgiften börjar eller en tolkad servicetid börjar. Notiser är lokala och kräver att appen är öppen; det finns ingen serverbaserad push
 
 ### 📡 Live-parkeringsdata
 - Hämtar parkeringsplatser från **OpenStreetMap Overpass API** inom 7 km från Stockholms centrum
@@ -164,6 +189,8 @@ Appen använder enbart öppna och tillförlitliga datakällor:
 | [OpenStreetMap](https://www.openstreetmap.org/) (Overpass API) | Realtidsdata för parkeringsplatser |
 | [OpenStreetMap Nominatim](https://nominatim.org/) | Adressökning och reverse geocoding |
 | [OSRM](https://project-osrm.org/) | Vägberäkning och ruttinformation |
+| [Stockholm Parkering](https://www.stockholmparkering.se/parkeringar/betala-parkering/) | Anläggningspriser, kapacitet och godkända betalningsappar |
+| [Open Charge Map](https://openchargemap.org/) och [NOBIL](https://nobil.no/) | Laddplatser, kontakter och effekter |
 
 ---
 
