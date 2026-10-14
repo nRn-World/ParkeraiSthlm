@@ -25,12 +25,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Accessibility,
   Bell,
+  BellOff,
   BellRing,
   Bike,
   Box as BoxIcon,
   Building2,
   CarFront,
   ChevronDown,
+  ChevronUp,
   CircleAlert,
   Crosshair,
   Download,
@@ -101,9 +103,15 @@ type ResultSort = "distance" | "price" | "free" | "power";
 type EvConnectorFilter = "all" | "type2" | "ccs" | "chademo" | "tesla";
 type ReminderLeadMinutes = 15 | 30;
 type DiscTimer = { endsAt: number; minutes: number; placeId: string; placeName: string };
+// En notis kan erbjuda en åtgärd, t.ex. Ångra efter ett misstag.
+type NoticeAction = { label: string; run: () => void };
 const DISC_TIMER_STORAGE_KEY = "parksthlm-disc-timer-v1";
 const DISC_PRESETS = [30, 60, 120, 180];
 const DISC_WARN_MINUTES = 10;
+// P-skivan är ett tillval: den går att stänga av helt så att platskorten inte tjatar
+// om timern. Valet sparas på enheten.
+const DISC_ENABLED_STORAGE_KEY = "parksthlm-disc-enabled";
+const readDiscEnabled = () => localStorage.getItem(DISC_ENABLED_STORAGE_KEY) !== "false";
 type ParkedCar = {
   lat: number;
   lng: number;
@@ -750,6 +758,21 @@ function nextFreeBoundary(tariff: TariffId, from: Date): { at: Date; amount: num
 function isFreeNow(place: ParkingPlace, priceByTariff: Map<TariffId, number>) {
   if (place.free) return true;
   return isTariffId(place.tariff) && priceByTariff.get(place.tariff) === 0;
+}
+
+// Svensk parkeringsskiva som ikon: blå skiva med ankomstfönster och P. En klocka säger
+// "tid", men skivan är den symbol föraren känner igen vid P-skiveknappen.
+function ParkingDiscIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <rect x="4.4" y="1.4" width="15.2" height="21.2" rx="2.6" fill="#1d64c4" />
+      <path d="M10 2.7h4l-2 4z" fill="#ffffff" />
+      <path d="M7.4 13a4.6 4.6 0 0 1 9.2 0z" fill="#f4f7fb" />
+      <circle cx="12" cy="11.4" r="0.9" fill="#1d64c4" />
+      <rect x="7.6" y="15" width="8.8" height="6" rx="1.5" fill="#ffffff" />
+      <text x="12" y="19.9" textAnchor="middle" fontSize="6.1" fontWeight="700" fill="#1d64c4" fontFamily="Verdana, Arial, sans-serif">P</text>
+    </svg>
+  );
 }
 
 function parkingIcon(place: ParkingPlace, selected: boolean) {
@@ -1771,6 +1794,8 @@ function App() {
   const [offlineTiles, setOfflineTiles] = useState<string[]>([]);
   const [offlineProgress, setOfflineProgress] = useState<{ cached: number; total: number } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeAction, setNoticeAction] = useState<NoticeAction | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
   const [canInstall, setCanInstall] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const [pwaInstallOpen, setPwaInstallOpen] = useState(false);
@@ -1780,7 +1805,11 @@ function App() {
   const [favoritesOpen, setFavoritesOpen] = useState(false);
   // P-skiva: nedräkning som överlever omladdning. Varning 10 min innan, notis när tiden går ut.
   const [discTimer, setDiscTimer] = useState<DiscTimer | null>(() => readLocalStorage<DiscTimer | null>(DISC_TIMER_STORAGE_KEY, null));
+  const [discEnabled, setDiscEnabled] = useState(readDiscEnabled);
   const [discMinutes, setDiscMinutes] = useState(120);
+  // Rutan är ihopfälld tills man trycker på P-skiveknappen. En pågående nedräkning
+  // visas ändå, så att tiden inte kan glömmas bort i en stängd ruta.
+  const [discOpen, setDiscOpen] = useState(false);
   const discWarnedRef = useRef<number | null>(null);
   const discFiredRef = useRef<number | null>(null);
   const [parkedCar, setParkedCar] = useState<ParkedCar | null>(() => normalizeParkedCar(readLocalStorage<ParkedCar | null>(PARKED_CAR_STORAGE_KEY, null)));
@@ -1828,6 +1857,7 @@ function App() {
   // Vald P-skivetid följer platsens maxtid när ett nytt platskort öppnas.
   useEffect(() => {
     if (selectedParking) setDiscMinutes(selectedParking.maxMinutes ?? 120);
+    setDiscOpen(false);
   }, [selectedParking?.id]);
 
   // Klockan som nedräkningen, påminnelsen och Städnatt-filtret räknar mot.
@@ -1925,9 +1955,16 @@ function App() {
   const clickedNavigation = clickedPlace ? navigationLinks(clickedPlace.lat, clickedPlace.lng) : null;
   const clickedTariff = clickedPlace?.tariff ?? null;
 
-  const showNotice = useCallback((message: string) => {
+  const showNotice = useCallback((message: string, action: NoticeAction | null = null) => {
     setNotice(message);
-    window.setTimeout(() => setNotice(null), 3600);
+    setNoticeAction(action);
+    // En notis med åtgärd ligger kvar lite längre, så att Ångra hinns med.
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice(null);
+      setNoticeAction(null);
+      noticeTimerRef.current = null;
+    }, action ? 6500 : 3600);
   }, []);
 
   // Systemnotiser fungerar bara när sidan är öppen. Det finns ingen serverbaserad
@@ -2556,6 +2593,10 @@ function App() {
     && selectedParking.priceText.length > 40
     ? selectedParking.priceText
     : null;
+  // P-skivepanelen visas när man öppnat den, eller när en nedräkning redan räknar ner
+  // på just den här platsen.
+  const discPanelPinned = selectedParking != null && discTimer != null && discTimer.placeId === selectedParking.id;
+  const discPanelOpen = discEnabled && (discOpen || discPanelPinned);
   const selectedNavigation = selectedParking ? navigationLinks(selectedParking.lat, selectedParking.lng) : null;
   const selectedResidentPermit = selectedParking ? residentPermitOf(selectedParking.priceText) : null;
   const selectedServiceOccurrence = selectedParking?.serviceText
@@ -3366,56 +3407,76 @@ function App() {
     showNotice("Parkeringsinformationen kopierades");
   };
 
-  // Delad parkering via URL (?spot=<id>&lat=..&lng=..&title=..). Id:t öppnar exakt
+  // Delad parkering via URL (?spot=<id>&lat=..&lng=..&title=..). Id:t pekar ut exakt
   // plats när datan finns, koordinaterna är reserv så att länken alltid fungerar.
   const [sharedSpot] = useState(() => {
     try {
       const params = new URLSearchParams(window.location.search);
-      const lat = Number(params.get("lat"));
-      const lng = Number(params.get("lng"));
       const spot = params.get("spot") || undefined;
-      const title = params.get("title") || "Delad parkering";
-      if (!spot && (!Number.isFinite(lat) || !Number.isFinite(lng))) return null;
-      return { spot, lat, lng, title };
+      const latParam = params.get("lat");
+      const lngParam = params.get("lng");
+      const lat = Number(latParam);
+      const lng = Number(lngParam);
+      // Utan parametrar blir Number(null) = 0, vilket såg ut som en delad plats i
+      // nollpunkten i Atlanten. Koordinater kräver därför att båda parametrarna finns.
+      const hasCoords = latParam !== null && lngParam !== null
+        && Number.isFinite(lat) && Number.isFinite(lng) && (lat !== 0 || lng !== 0);
+      if (!spot && !hasCoords) return null;
+      return { spot, lat, lng, hasCoords, title: params.get("title")?.trim() || "Delad parkering" };
     } catch {
       return null;
     }
   });
-  const sharedOpenedRef = useRef(false);
+  // En delad plats läggs till som en vanlig plats i kartan och listan i stället för att
+  // dyka upp som ett öppet kort. Användaren väljer själv när platsen ska öppnas, parkeras
+  // på eller delas vidare med dela-knappen.
+  const sharedAddedRef = useRef(false);
   useEffect(() => {
-    if (!sharedSpot || sharedOpenedRef.current || !mapReady) return;
-    const hasCoords = Number.isFinite(sharedSpot.lat) && Number.isFinite(sharedSpot.lng);
+    if (!sharedSpot || sharedAddedRef.current || !mapReady) return;
     const byId = sharedSpot.spot ? allParking.find((place) => place.id === sharedSpot.spot) : undefined;
     // Id utan koordinater som ännu inte finns i datan: vänta på fler dataladdningar.
-    if (!byId && !hasCoords) return;
-    const place: ParkingPlace = byId ?? ({
-      id: sharedSpot.spot ?? `shared-${sharedSpot.lat}-${sharedSpot.lng}`,
-      name: sharedSpot.title,
-      address: `${sharedSpot.lat.toFixed(5)}, ${sharedSpot.lng.toFixed(5)}`,
-      area: "Stockholm",
-      lat: sharedSpot.lat,
-      lng: sharedSpot.lng,
-      kind: "surface",
-      tariff: null,
-      free: false,
-      priceText: "Delad plats",
-      note: "Platsen delades via länk. Kontrollera skyltningen på plats.",
-      source: "local",
-    } satisfies ParkingPlace);
-    sharedOpenedRef.current = true;
-    setSelectedParking(place);
-    setPanelOpen(false);
-    mapRef.current?.flyTo({ center: toLngLat([place.lat, place.lng]), zoom: 16, duration: 1200 });
+    if (!byId && !sharedSpot.hasCoords) return;
+    sharedAddedRef.current = true;
+    if (byId) {
+      setAllParking((current) => current.some((place) => place.id === byId.id) ? current : [...current, byId]);
+      showNotice(`Delad parkering finns i listan: ${byId.name}`);
+    } else {
+      const place: ParkingPlace = {
+        id: sharedSpot.spot ?? `shared-${sharedSpot.lat.toFixed(5)}-${sharedSpot.lng.toFixed(5)}`,
+        name: sharedSpot.title,
+        address: `${sharedSpot.lat.toFixed(5)}, ${sharedSpot.lng.toFixed(5)}`,
+        area: "Stockholm",
+        lat: sharedSpot.lat,
+        lng: sharedSpot.lng,
+        kind: "surface",
+        tariff: null,
+        free: false,
+        priceText: "Delad plats",
+        note: "Platsen delades via länk. Kontrollera skyltningen på plats.",
+        source: "local",
+      };
+      setAllParking((current) => current.some((item) => item.id === place.id) ? current : [...current, place]);
+      showNotice(`Delad parkering tillagd i kartan och listan: ${place.name}`);
+    }
     try {
       window.history.replaceState(null, "", window.location.pathname);
     } catch {
       // Historik saknas – lämna URL:en orörd.
     }
-    showNotice(`Öppnade delad plats: ${place.name}`);
   }, [allParking, mapReady, sharedSpot, showNotice]);
 
+  // Delade platser och kartpunkter har bara koordinater som adress – visa namnet först
+  // så att platsen går att känna igen även i bilkortet.
+  const coordOnlyAddress = selectedParking ? /^[-\d.]+,\s*[-\d.]+$/.test(selectedParking.address) : false;
   const parkedCarCandidate = selectedParking
-    ? { lat: selectedParking.lat, lng: selectedParking.lng, address: `${selectedParking.address}, ${selectedParking.area}`, source: "parking" as const }
+    ? {
+      lat: selectedParking.lat,
+      lng: selectedParking.lng,
+      address: coordOnlyAddress
+        ? `${selectedParking.name} · ${selectedParking.address}`
+        : `${selectedParking.address}, ${selectedParking.area}`,
+      source: "parking" as const,
+    }
     : userPosition
       ? { lat: userPosition[0], lng: userPosition[1], address: "Din GPS-position", source: "gps" as const }
       : clickedPosition
@@ -3518,7 +3579,29 @@ function App() {
 
   const cancelDiscTimer = () => {
     setDiscTimer(null);
+    // Ingen nedräkning kvar att visa – fäll ihop rutan igen så att kortet blir kompakt.
+    setDiscOpen(false);
     showNotice("P-skivan avbröts");
+  };
+
+  // Stänger av eller slår på P-skivan. Avstängd betyder att blocket med maxtid och timer
+  // försvinner från alla platskort och att en pågående nedräkning tas bort, så att inga
+  // P-skivepåminnelser kommer.
+  const setDiscTimerEnabled = (enabled: boolean) => {
+    setDiscEnabled(enabled);
+    localStorage.setItem(DISC_ENABLED_STORAGE_KEY, enabled ? "true" : "false");
+    if (enabled) {
+      // Tillbaka till den kompakta knappen, inte en utfälld ruta.
+      setDiscOpen(false);
+      showNotice("P-skiva påslagen – P-skiveknappen visas på platskorten");
+      return;
+    }
+    if (discTimer) setDiscTimer(null);
+    // Ett misstryck ska gå att ångra direkt, annars ligger inställningen kvar under Bil.
+    showNotice("P-skiva avstängd – slå på igen under Bil", {
+      label: "Ångra",
+      run: () => setDiscTimerEnabled(true),
+    });
   };
 
   // P-skiva: varna 10 min innan och notifiera när tiden går ut. Appen måste vara öppen.
@@ -4109,39 +4192,64 @@ function App() {
                 </div>
               </div>
             ) : null}
-            <div className="disc-card">
-              <TimerIcon size={17} />
-              <div>
-                <small>P-skiva / maxtid</small>
-                {selectedParking.maxMinutes ? (
-                  <strong>Max {formatDuration(selectedParking.maxMinutes * 60_000)} enligt skyltning</strong>
-                ) : (
-                  <strong>Ingen maxtid rapporterad – välj tid manuellt</strong>
-                )}
-                {discTimer && discTimer.placeId === selectedParking.id ? (
-                  <span className="disc-active">P-skiva igång · {discTimer.endsAt > clock ? `${formatDuration(discTimer.endsAt - clock)} kvar` : "tiden är ute – flytta bilen"}</span>
-                ) : null}
-                <div className="disc-presets" role="group" aria-label="Välj P-skivetid">
-                  {DISC_PRESETS.map((preset) => (
-                    <button
-                      key={preset}
-                      type="button"
-                      className={discMinutes === preset ? "active" : ""}
-                      aria-pressed={discMinutes === preset}
-                      onClick={() => setDiscMinutes(preset)}
-                    >
-                      {formatDuration(preset * 60_000)}
-                    </button>
-                  ))}
+            {discPanelOpen ? (
+              <div className="disc-card">
+                <TimerIcon size={17} />
+                <div>
+                  <small>P-skiva / maxtid</small>
+                  {selectedParking.maxMinutes ? (
+                    <strong>Max {formatDuration(selectedParking.maxMinutes * 60_000)} enligt skyltning</strong>
+                  ) : (
+                    <strong>Ingen maxtid rapporterad – välj tid manuellt</strong>
+                  )}
+                  {discTimer && discTimer.placeId === selectedParking.id ? (
+                    <span className="disc-active">P-skiva igång · {discTimer.endsAt > clock ? `${formatDuration(discTimer.endsAt - clock)} kvar` : "tiden är ute – flytta bilen"}</span>
+                  ) : null}
+                  <div className="disc-presets" role="group" aria-label="Välj P-skivetid">
+                    {DISC_PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        className={discMinutes === preset ? "active" : ""}
+                        aria-pressed={discMinutes === preset}
+                        onClick={() => setDiscMinutes(preset)}
+                      >
+                        {formatDuration(preset * 60_000)}
+                      </button>
+                    ))}
+                  </div>
+                  {discTimer && discTimer.placeId === selectedParking.id ? (
+                    <button type="button" onClick={cancelDiscTimer}>Avbryt P-skiva</button>
+                  ) : (
+                    <button type="button" className="modal-action" onClick={startDiscTimer}><TimerIcon size={16} /> Starta P-skiva · {formatDuration(discMinutes * 60_000)}</button>
+                  )}
+                  <span>Kontrollera alltid vägmärket på plats. Appen måste vara öppen för notisen.</span>
+                  <div className="disc-card-actions">
+                    {discPanelPinned ? null : (
+                      <button type="button" className="disc-off" onClick={() => setDiscOpen(false)}><ChevronUp size={14} /> Dölj</button>
+                    )}
+                    <button type="button" className="disc-off" onClick={() => setDiscTimerEnabled(false)}><BellOff size={14} /> Visa inte P-skiva</button>
+                  </div>
                 </div>
-                {discTimer && discTimer.placeId === selectedParking.id ? (
-                  <button type="button" onClick={cancelDiscTimer}>Avbryt P-skiva</button>
-                ) : (
-                  <button type="button" className="modal-action" onClick={startDiscTimer}><TimerIcon size={16} /> Starta P-skiva · {formatDuration(discMinutes * 60_000)}</button>
-                )}
-                <span>Kontrollera alltid vägmärket på plats. Appen måste vara öppen för notisen.</span>
               </div>
-            </div>
+            ) : discEnabled ? (
+              <button type="button" className="disc-add" onClick={() => setDiscOpen(true)} aria-expanded={false}>
+                <ParkingDiscIcon size={22} />
+                <span>
+                  <strong>P-skiva</strong>
+                  <small>
+                    {selectedParking.maxMinutes
+                      ? `Maxtid ${formatDuration(selectedParking.maxMinutes * 60_000)} enligt skyltning · lägg till påminnelse`
+                      : "Lägg till maxtid och påminnelse när tiden går ut"}
+                  </small>
+                </span>
+                <ChevronDown size={17} />
+              </button>
+            ) : (
+              <button type="button" className="disc-restore" onClick={() => setDiscTimerEnabled(true)}>
+                <BellOff size={14} /> P-skiva avstängd · Slå på
+              </button>
+            )}
             <p className="place-note"><CircleAlert size={15} />{selectedParkingTariff ? TARIFFS[selectedParkingTariff].hours : selectedParking.note}</p>
             {(selectedParkingTariff || selectedParking.source === "api") && selectedNavigation ? (
               <div className="payment-card">
@@ -4471,6 +4579,18 @@ function App() {
                   <strong>2D</strong><small>Platt karta norr-upp</small>
                 </button>
               </div>
+              <h3 className="map-view-heading">P-skiva-timer</h3>
+              <p className="map-view-text">Maxtid från skyltningen och en nedräkning visas på varje platskort. Stäng av om du inte vill ha P-skivepåminnelser.</p>
+              <div className="vehicle-profile-grid map-view-grid">
+                <button type="button" className={discEnabled ? "active" : ""} onClick={() => setDiscTimerEnabled(true)}>
+                  <span><ParkingDiscIcon size={20} /></span>
+                  <strong>På</strong><small>Knapp på platskorten</small>
+                </button>
+                <button type="button" className={!discEnabled ? "active" : ""} onClick={() => setDiscTimerEnabled(false)}>
+                  <span><BellOff size={20} /></span>
+                  <strong>Av</strong><small>Ingen P-skiva</small>
+                </button>
+              </div>
               <h3 className="map-view-heading">Registreringsnummer <small className="optional-tag">valfritt</small></h3>
               <p className="map-view-text">Visas på det sparade bilkortet. Praktiskt med flera bilar eller hyrbil.</p>
               <label className="reg-input-label">
@@ -4613,6 +4733,19 @@ function App() {
         {notice && (
           <motion.div className="toast" initial={{ opacity: 0, y: 18, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 14 }}>
             <Crosshair size={17} /> {notice}
+            {noticeAction ? (
+              <button
+                type="button"
+                className="toast-action"
+                onClick={() => {
+                  setNotice(null);
+                  setNoticeAction(null);
+                  noticeAction.run();
+                }}
+              >
+                {noticeAction.label}
+              </button>
+            ) : null}
           </motion.div>
         )}
       </AnimatePresence>

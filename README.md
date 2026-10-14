@@ -78,11 +78,15 @@ Appen visar Stockholms stads officiella fem taxeområden (Taxa 1–5) med korrek
 
 ### 🔗 Dela parkering
 - Dela-knappen på varje platskort skapar en länk med `?spot=<id>&lat=..&lng=..&title=..`
-- Länken öppnar platsen direkt i appen (exakt plats via id, koordinater som reserv)
+- Länken öppnar inget kort av sig själv: platsen läggs till som en vanlig, valbar plats i kartan och listan (exakt plats via id, koordinater som reserv)
+- Därifrån kan mottagaren öppna platsen, trycka **Parkera här** eller dela den vidare
 
 ### ⏱️ P-skiva-timer
-- Platskortet visar maxtid från föreskrift (max minuter/timmar) eller OSM (maxstay)
+- Platskortet har en **P-skiveknapp** (blå parkeringsskiva); den fäller ut maxtid, tider och startknapp först när man trycker på den
 - Välj 30 min / 1 / 2 / 3 tim och starta – nedräkning i kortet och global banner
+- En pågående nedräkning håller rutan utfälld; Avbryt fäller ihop den igen
+- P-skivan är ett tillval: **Visa inte P-skiva** i kortet eller På/Av under Fordonsprofil → P-skiva-timer stänger av den och tar bort en pågående nedräkning
+- Avstängd P-skiva går alltid att slå på igen: **Ångra** i notisen direkt efteråt, eller raden **P-skiva avstängd · Slå på** i platskortet, eller På under Fordonsprofil
 - Varnar 10 min innan och notifierar när tiden går ut (lokalt, appen måste vara öppen)
 
 ### 🚗 Min parkerade bil
