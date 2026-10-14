@@ -155,6 +155,14 @@ I Xcode: välj enheten *Any iOS Device (arm64)*, **Product → Archive**, och d�
 **Distribute App → App Store Connect → Upload**. Byggnumret måste vara högre än förra
 uppladdningen.
 
+### Om e-postadressen på webbplatsen
+
+Webbplatsen ligger hos Cloudflare, och deras skydd mot e-postskörd byter annars ut
+adressen på integritets- och supportsidan mot en platshållare som bara fungerar när deras
+skript laddas. Adresserna skrivs därför med kodat snabel-a, och då lämnas de i fred. Vill du
+i stället stänga av funktionen helt: Cloudflare → **Scrape Shield → Email Address
+Obfuscation**. Det spelar ingen roll för granskningen – adressen syns i webbläsaren oavsett.
+
 ## Skärmbilder
 
 Appen körs på både iPhone och iPad (`TARGETED_DEVICE_FAMILY = "1,2"`), och då kräver Apple
