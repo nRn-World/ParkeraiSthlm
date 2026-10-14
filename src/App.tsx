@@ -4,6 +4,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import type { Feature as GeoFeature, FeatureCollection as GeoFeatureCollection } from "geojson";
 import { ensureIdbVersion, idbDel, idbGet, idbSet } from "./idb-cache";
+import { trackEvent } from "./analytics";
 import {
   DRIVING_PITCH,
   OSM_RASTER_STYLE,
@@ -3282,6 +3283,7 @@ function App() {
   };
 
   const saveOffline = async () => {
+    trackEvent(isStandalone ? "Offline-data sparad" : "Spara offline");
     if (!isStandalone && isIosDevice()) {
       setCanInstall(true);
       setInstallPlatform("ios");
@@ -3356,6 +3358,7 @@ function App() {
       return;
     }
     setFavorites((current) => [...current, place]);
+    trackEvent("Favorit sparad");
     showNotice("Parkeringen sparades som favorit");
   };
 
@@ -3384,6 +3387,7 @@ function App() {
         ? `${placeTariffLabel(place)} – ${getCurrentPrice(place.tariff).label}`
         : place.priceText;
     const text = `${place.name}\n${place.address}, ${place.area}\n${price}\n${shareUrlFor(place)}`;
+    trackEvent("Delade parkering");
     if (navigator.share) {
       try {
         await navigator.share({ title: place.name, text });
@@ -3437,6 +3441,7 @@ function App() {
     // Id utan koordinater som ännu inte finns i datan: vänta på fler dataladdningar.
     if (!byId && !sharedSpot.hasCoords) return;
     sharedAddedRef.current = true;
+    trackEvent("Öppnade delad länk", { kanda: Boolean(byId) });
     if (byId) {
       setAllParking((current) => current.some((place) => place.id === byId.id) ? current : [...current, byId]);
       showNotice(`Delad parkering finns i listan: ${byId.name}`);
@@ -3531,6 +3536,7 @@ function App() {
       reg: vehicleReg || null,
     });
     setParkedCarEditing(false);
+    trackEvent("Bilens plats sparad", { kalla: parkedCarCandidate.source });
     const savedMessage = parkedCarCandidateTariff
       ? `Bilens plats sparades · ${getCurrentPrice(parkedCarCandidateTariff).label}`
       : "Bilens plats sparades";
@@ -3567,6 +3573,7 @@ function App() {
     });
     discWarnedRef.current = null;
     discFiredRef.current = null;
+    trackEvent("P-skiva startad", { minuter: discMinutes });
     try {
       if (typeof Notification !== "undefined" && Notification.permission === "default") {
         void Notification.requestPermission().catch(() => "denied");
@@ -3597,6 +3604,7 @@ function App() {
       return;
     }
     if (discTimer) setDiscTimer(null);
+    trackEvent("P-skiva avstängd");
     // Ett misstryck ska gå att ångra direkt, annars ligger inställningen kvar under Bil.
     showNotice("P-skiva avstängd – slå på igen under Bil", {
       label: "Ångra",
@@ -4627,6 +4635,7 @@ function App() {
                 <div><strong>Beläggning</strong><span>Inget öppet liveflöde för lediga platser hittades. Garage visar därför kapacitet, men inte grön/gul/röd beläggning.</span></div>
                 <div><strong>Påminnelser</strong><span>Påminnelser är lokala och kräver att appen är öppen. Det finns ingen serverbaserad push i den här versionen.</span></div>
                 <div><strong>Offline</strong><span>App, taxor, lokala parkeringar, GPS och besökta kartvyer fungerar utan nät. Ny adressökning och vägrutt kräver internet.</span></div>
+                <div><strong>Statistik</strong><span>Appen räknar anonymt antal besök och några få knapptryck (t.ex. P-skiva, dela och parkera här) för att utvecklaren ska se vad som används. Inga cookies, inga personuppgifter och ingen spårning av dig mellan olika sidor.</span></div>
               </div>
               <div className="warning-box"><CircleAlert size={18} /><span><strong>Viktigt:</strong> Vägmärken och skyltning på plats gäller alltid före kartan. Kontrollera även servicedag, max tid och eventuella tillståndskrav.</span></div>
               <div className="source-links">

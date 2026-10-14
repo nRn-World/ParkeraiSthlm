@@ -111,6 +111,11 @@ Appen visar Stockholms stads officiella fem taxeområden (Taxa 1–5) med korrek
 
 ---
 
+### 📈 Användningsstatistik
+- Anonym, cookiefri räkning av besök och några få knapptryck (P-skiva, dela, parkera här, spara offline) via Umami Cloud
+- Endast utvecklaren ser siffrorna; instrumentpanelen är inloggningsskyddad
+- Webbplats-id:t sätts i `index.html` (`UMAMI_WEBSITE_ID`). Tomt värde stänger av statistiken, och på localhost laddas ingenting
+
 ## 🏗️ Teknikstack
 
 | Teknik | Version | Syfte |

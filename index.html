@@ -34,6 +34,25 @@
         __ipp = e;
       });
     </script>
+    <!-- Användningsstatistik (Umami): antal besök och några knapptryck, utan cookies.
+         På localhost laddas ingenting, så utveckling räknas aldrig. Sätt webbplats-id:t
+         från Umami Cloud i UMAMI_WEBSITE_ID nedan – tomt värde stänger av statistiken. -->
+    <script>
+      var UMAMI_WEBSITE_ID = "13556f4b-df3f-4fc9-b290-d3741b2103de";
+      // Umami visar rätt adress i sin kodruta. EU-konton använder samma värd, men om din
+      // region ger en annan adress byter du bara raden nedan.
+      var UMAMI_SCRIPT_URL = "https://cloud.umami.is/script.js";
+      (function () {
+        var host = location.hostname;
+        if (!UMAMI_WEBSITE_ID) return;
+        if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host === "[::1]" || host === "::1" || host === "") return;
+        var script = document.createElement("script");
+        script.defer = true;
+        script.src = UMAMI_SCRIPT_URL;
+        script.setAttribute("data-website-id", UMAMI_WEBSITE_ID);
+        document.head.appendChild(script);
+      })();
+    </script>
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
