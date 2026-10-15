@@ -53,6 +53,11 @@ if (!playIconMeta.hasAlpha || playIconMeta.width !== 512 || playIconMeta.height 
 }
 await writeFile(path.join(root, "public", "play-icon-512.png"), playIcon);
 
+const WEB_SIZES = [48, 72, 96, 128, 144, 152, 168, 180, 192, 384, 512];
+for (const size of WEB_SIZES) {
+  await sharp(iconPng).resize(size, size).png({ compressionLevel: 9 }).toFile(path.join(root, "public", `icon-${size}.png`));
+}
+
 // Samma ikon som logo för @capacitor/assets.
 const assetsDir = path.join(root, "assets");
 await mkdir(assetsDir, { recursive: true });

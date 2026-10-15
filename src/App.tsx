@@ -4232,10 +4232,10 @@ function App() {
               <div className="place-fact"><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div className="place-fact"><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
               {(selectedParking.disabledSpaces ?? 0) > 0 ? <div className="place-fact"><small>Handikapp</small><strong>{`${selectedParking.disabledSpaces} ${selectedParking.disabledSpaces !== 1 ? "platser" : "plats"}`}</strong></div> : null}
-              {(selectedParking.mcSpaces ?? 0) > 0 ? <div className="place-fact"><small>MC</small><strong>{selectedParking.mcSpaces} plats{selectedParking.mcSpaces !== 1 ? "er" : ""}</strong></div> : null}
+              {(selectedParking.mcSpaces ?? 0) > 0 ? <div className="place-fact"><small>MC</small><strong>{`${selectedParking.mcSpaces} ${selectedParking.mcSpaces !== 1 ? "platser" : "plats"}`}</strong></div> : null}
               {(selectedParking.evSpaces ?? 0) > 0 ? (
                 <div className="place-ev-details">
-                  <div className="place-ev-header"><Zap size={16} /><small>Elladdning</small><strong>{selectedParking.evSpaces} plats{selectedParking.evSpaces !== 1 ? "er" : ""}</strong></div>
+                  <div className="place-ev-header"><Zap size={16} /><small>Elladdning</small><strong>{`${selectedParking.evSpaces} ${selectedParking.evSpaces !== 1 ? "platser" : "plats"}`}</strong></div>
                   {selectedParking.evConnections?.map((c, i) => (
                     <div key={i} className="place-ev-conn">
                       <span className="ev-qty">{c.quantity} ×</span>
