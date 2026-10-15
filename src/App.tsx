@@ -38,6 +38,12 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Accessibility,
   Bell,
+  CreditCard,
+  Database,
+  Gauge,
+  Home,
+  ShieldCheck,
+  Wallet,
   BellOff,
   BellRing,
   Bike,
@@ -4685,23 +4691,40 @@ function App() {
       <AnimatePresence>
         {infoOpen && (
           <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setInfoOpen(false)}>
-            <motion.section className="info-modal" role="dialog" aria-modal="true" aria-labelledby="info-title" tabIndex={-1} initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
+            <motion.section className="about-sheet" role="dialog" aria-modal="true" aria-labelledby="info-title" tabIndex={-1} initial={{ opacity: 0, y: 28, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 18 }} onClick={(event) => event.stopPropagation()}>
               <button className="sheet-close" type="button" onClick={() => setInfoOpen(false)} aria-label="Stäng"><X size={19} /></button>
-              <span className="info-icon"><Info size={24} /></span>
-              <h2 id="info-title">Parkera smartare i Stockholm</h2>
-              <p>Kartan visar Stockholms fem ordinarie taxeområden, gatuparkering, garage, markparkering och platser som är markerade som gratis.</p>
-              <div className="info-list">
-                <div><strong>Taxedata</strong><span>Prisnivåer och tider baseras på Stockholms stads publicerade taxor. Helgdagar och lokala avvikelser kan förekomma.</span></div>
-                <div><strong>Live-parkering</strong><span>Kompletteras online från OpenStreetMap och sparas i telefonen för senare användning.</span></div>
-                <div><strong>Servicetider</strong><span>Städnatt-filtret visar bara servicetider som kan tolkas maskinellt och börjar inom ett dygn. Sparade bilar varnas upp till 48 timmar i förväg. Vägmärket gäller alltid.</span></div>
-                <div><strong>Boende</strong><span>Boendefiltret använder boendetaxan i föreskriftstexten. Tillståndets område och krav måste kontrolleras mot skyltning och stadens tillståndsregler.</span></div>
-                <div><strong>Betalning</strong><span>Betala P är nedlagd. Platskortet länkar till officiella guider för EasyPark, Parkster och Stockholm Parkering eftersom zonkoden på skylten avgör.</span></div>
-                <div><strong>Beläggning</strong><span>Inget öppet liveflöde för lediga platser hittades. Garage visar därför kapacitet, men inte grön/gul/röd beläggning.</span></div>
-                <div><strong>Påminnelser</strong><span>Påminnelser skapas lokalt i telefonen och kräver att appen har varit öppen. I den inbyggda appen visas de som systemnotiser från iOS; det finns ingen serverbaserad push i den här versionen.</span></div>
-                <div><strong>Offline</strong><span>App, taxor, lokala parkeringar, GPS och besökta kartvyer fungerar utan nät. Ny adressökning och vägrutt kräver internet.</span></div>
-                <div><strong>Statistik</strong><span>Webbplatsen räknar anonymt antal besök och några få knapptryck (t.ex. P-skiva, dela och parkera här) för att utvecklaren ska se vad som används. Inga cookies, inga personuppgifter och ingen spårning av dig mellan olika sidor. Den inbyggda appen skickar ingen statistik alls.</span></div>
+              <div className="about-hero">
+                <img src={`${import.meta.env.BASE_URL}icon-96.png`} alt="" width={56} height={56} />
+                <div>
+                  <h2 id="info-title">Parkera smartare i Stockholm</h2>
+                  <p>Taxa, plats och pris – direkt på kartan.</p>
+                </div>
               </div>
-              <div className="warning-box"><CircleAlert size={18} /><span><strong>Viktigt:</strong> Vägmärken och skyltning på plats gäller alltid före kartan. Kontrollera även servicedag, max tid och eventuella tillståndskrav.</span></div>
+              <div className="about-stats">
+                <span><strong>5</strong> taxeområden</span>
+                <span><strong>Gratis</strong> utan konto</span>
+                <span><strong>Offline</strong> när du vill</span>
+              </div>
+              <div className="about-grid">
+                {[
+                  { icon: <Wallet size={18} />, title: "Taxor", text: "Priser och tider från Stockholms stad. Helgdagar och lokala avvikelser kan förekomma." },
+                  { icon: <Database size={18} />, title: "Live-parkering", text: "Hämtas från OpenStreetMap och sparas i telefonen." },
+                  { icon: <Moon size={18} />, title: "Städnatt", text: "Visar servicetider som börjar inom ett dygn. Sparade bilar varnas upp till 48 h i förväg." },
+                  { icon: <Home size={18} />, title: "Boende", text: "Använder boendetaxan. Kontrollera tillstånd mot skylten." },
+                  { icon: <CreditCard size={18} />, title: "Betalning", text: "Länkar till EasyPark, Parkster och Stockholm Parkering – zonkoden på skylten avgör." },
+                  { icon: <Gauge size={18} />, title: "Beläggning", text: "Inget öppet flöde för lediga platser finns. Garage visar kapacitet, inte beläggning." },
+                  { icon: <Bell size={18} />, title: "Påminnelser", text: "Skapas lokalt i telefonen och kräver att appen har varit öppen." },
+                  { icon: <WifiOff size={18} />, title: "Offline", text: "Karta, taxor och GPS fungerar utan nät. Ny sökning och rutt kräver internet." },
+                  { icon: <ShieldCheck size={18} />, title: "Integritet", text: "Anonym statistik på webben, inga cookies. Appen skickar ingen statistik alls." },
+                ].map((item) => (
+                  <div className="about-card" key={item.title}>
+                    <span className="about-card-icon">{item.icon}</span>
+                    <strong>{item.title}</strong>
+                    <small>{item.text}</small>
+                  </div>
+                ))}
+              </div>
+              <div className="warning-box"><CircleAlert size={18} /><span><strong>Viktigt:</strong> Vägmärken och skyltning på plats gäller alltid före kartan.</span></div>
               <div className="source-links">
                 <a href="https://parkering.stockholm/betala-parkering/taxeomraden-avgifter/" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://parkering.stockholm/betala-parkering/taxeomraden-avgifter/"); }}>Stockholms stads taxor <ExternalLink size={14} /></a>
                 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://www.openstreetmap.org/copyright"); }}>OpenStreetMap <ExternalLink size={14} /></a>
