@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -42,6 +42,10 @@
     <!-- P-skivan och påminnelsen om den parkerade bilen visas som lokala notiser.
          Från Android 13 krävs behörigheten för att de ska synas. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Notispluginen deklarerar SCHEDULE_EXACT_ALARM, men Google Play kräver en särskild deklaration för den.
+         Påminnelserna klarar sig med ungefärlig tid (några minuters marginal), så den tas bort. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" tools:node="remove" />
 
     <!-- Kartan har nytta av GPS men appen ska gå att installera även utan den. -->
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />

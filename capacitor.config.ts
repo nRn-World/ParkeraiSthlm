@@ -15,7 +15,7 @@ const config: CapacitorConfig = {
   ios: {
     // Appen ritar sin egen yta ända ut i kanterna (samma som standalone-läget i webbläsaren).
     contentInset: "never",
-    backgroundColor: "#1266ee",
+    backgroundColor: "#040c1f",
     // Mörkt läge hanteras av appens eget CSS-tema, inte av systemets.
     preferredContentMode: "mobile",
   },
@@ -23,7 +23,7 @@ const config: CapacitorConfig = {
     SplashScreen: {
       launchShowDuration: 600,
       launchAutoHide: true,
-      backgroundColor: "#1266ee",
+      backgroundColor: "#040c1f",
       showSpinner: false,
       // Splash-bilden får skalas upp så att den fyller skärmen på alla iPhone-modeller.
       iosScaleToFit: false,
@@ -36,7 +36,7 @@ const config: CapacitorConfig = {
       style: "DARK",
     },
     LocalNotifications: {
-      smallIcon: "ic_stat_icon_config_sample",
+      smallIcon: "ic_stat_parkisthlm",
       iconColor: "#1266ee",
     },
   },
