@@ -1950,10 +1950,10 @@ function App() {
       ?.setAttribute("content", darkMode ? "#0b1119" : "#1266ee");
   }, [darkMode]);
 
-  // Den inbyggda appens statusrad: ljus text ovanpå appens egen yta.
+  // Den inbyggda appens statusrad: text som syns mot kartan i valt tema.
   useEffect(() => {
-    void setNativeStatusBar();
-  }, []);
+    void setNativeStatusBar(darkMode);
+  }, [darkMode]);
 
   // Skalet runt webbvyn i den inbyggda appen: startbilden tas bort när appen är redo.
   useEffect(() => {

@@ -246,15 +246,14 @@ export async function registerAndroidBackButton(closeTopLayer: () => boolean): P
 }
 
 /**
- * Statusraden ligger ovanpå appens egen yta (kartan och den blå listen), och ska därför
- * ha ljus text i både ljust och mörkt tema – samma beteende som webbappen har i
- * standalone-läge. Färgen på själva listen sätts inte, eftersom den ligger bakom appens yta.
+ * Statusraden ligger ovanpå appens egen yta (ljus eller mörk karta), så texten måste ha
+ * motsatt färg: mörk text i ljust tema och ljus text i mörkt. Style.Light = mörk text.
  */
-export async function setNativeStatusBar(): Promise<void> {
+export async function setNativeStatusBar(darkMode: boolean): Promise<void> {
   if (!isNativeApp()) return;
   try {
     const { StatusBar, Style } = await import("@capacitor/status-bar");
-    await StatusBar.setStyle({ style: Style.Dark });
+    await StatusBar.setStyle({ style: darkMode ? Style.Dark : Style.Light });
   } catch {
     // Statusraden har en vettig standard om anropet inte stöds.
   }

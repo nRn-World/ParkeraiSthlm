@@ -33,7 +33,7 @@ const config: CapacitorConfig = {
     StatusBar: {
       // Kartan ligger bakom statusraden, precis som i webbläsarens standalone-läge.
       overlaysWebView: true,
-      style: "DARK",
+      style: "LIGHT",
     },
     LocalNotifications: {
       smallIcon: "ic_stat_parkisthlm",
