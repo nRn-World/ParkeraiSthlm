@@ -4084,3 +4084,45 @@ a:focus-visible {
   }
 }
 
+
+/* Flik på panelens kant som fäller ut/in parkeringslistan (bara på dator; mobilen har menyknappen). */
+.panel-tab {
+  position: absolute;
+  z-index: 901;
+  top: 50%;
+  left: 0;
+  display: grid;
+  width: 24px;
+  height: 64px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(218, 226, 225, 0.9);
+  border-left: 0;
+  border-radius: 0 12px 12px 0;
+  color: #1266ee;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 4px 0 16px rgba(36, 50, 58, 0.14);
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: left 0.36s cubic-bezier(0.22, 1, 0.36, 1), background 0.18s ease;
+}
+
+.panel-tab.panel-open {
+  left: 406px;
+}
+
+.panel-tab:hover {
+  background: #fff;
+}
+
+.dark .panel-tab {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #7fb0ff;
+  background: rgba(17, 26, 38, 0.96);
+}
+
+@media (max-width: 860px) {
+  .panel-tab {
+    display: none;
+  }
+}

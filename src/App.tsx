@@ -52,6 +52,8 @@ import {
   ExternalLink,
   Heart,
   Info,
+  ChevronLeft,
+  ChevronRight,
   ListFilter,
   LocateFixed,
   Map as MapIcon,
@@ -1799,7 +1801,7 @@ function App() {
   const map3dRef = useRef(map3dEnabled);
   const [locating, setLocating] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null);
@@ -4131,6 +4133,10 @@ function App() {
           </div>
         </div>
       </section>
+
+      <button type="button" className={`panel-tab ${panelOpen ? "panel-open" : ""}`} onClick={() => setPanelOpen((open) => !open)} aria-label={panelOpen ? "Dölj parkeringslistan" : "Visa parkeringslistan"} aria-expanded={panelOpen} title={panelOpen ? "Dölj listan" : "Visa listan"}>
+        {panelOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
+      </button>
 
       <div className="map-top-actions" aria-label="Snabbåtgärder">
         <button type="button" onClick={() => setPanelOpen((open) => !open)} className="list-button" aria-label={panelOpen ? "Dölj parkeringslistan" : "Visa parkeringslistan"} aria-pressed={panelOpen} title={panelOpen ? "Dölj lista" : "Visa parkeringar"} data-mobile-label="Lista">
