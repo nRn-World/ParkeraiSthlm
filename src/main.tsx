@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import App from "./App";
 import { isNativeApp } from "./native";
+import { startTranslator } from "./i18n";
 
 // Den inbyggda appen har allt i paketet och saknar stöd för service workers (den körs på
 // capacitor://) – där laddas filerna direkt från appen i stället.
@@ -24,6 +25,8 @@ if ("serviceWorker" in navigator && !isNativeApp()) {
     })
     .catch(() => undefined);
 }
+
+startTranslator();
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

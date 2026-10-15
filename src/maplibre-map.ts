@@ -1,6 +1,7 @@
 import type { FeatureCollection } from "geojson";
 import { Marker, type Map as MapLibreMap, type StyleSpecification } from "maplibre-gl";
 import type { LatLng } from "./data";
+import { isEnglish } from "./i18n";
 
 // 3D-vy som Google Maps/Waze i körläge. maxPitch är 60° (MapLibres max utan
 // experimentellt läge) – det ger tydlig perspektivkänsla utan renderingsproblem.
@@ -30,7 +31,7 @@ export const OSM_RASTER_STYLE: StyleSpecification = {
       tileSize: 256,
       minzoom: 0,
       maxzoom: 19,
-      attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>-bidragsgivare',
+      attribution: `© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>${isEnglish ? " contributors" : "-bidragsgivare"}`,
     },
   },
   layers: [{ id: "osm", type: "raster", source: "osm" }],

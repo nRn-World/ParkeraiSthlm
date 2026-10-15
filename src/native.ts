@@ -3,6 +3,7 @@
 // Allt i den här filen är skrivet så att webbversionen beter sig exakt som förut:
 // finns ingen native-brygga används webbläsarens egna API:er. Ingen import av
 // native-koden sker på webben, så webbpaketet påverkas inte.
+import { tr } from "./i18n";
 import { Capacitor } from "@capacitor/core";
 
 export type NativePosition = {
@@ -150,7 +151,9 @@ export async function requestNotificationPermission(): Promise<boolean> {
  * Visar en avisering. I den inbyggda appen blir det en riktig systemnotis (appen
  * behöver inte vara öppen i förgrunden), på webben webbläsarens notis.
  */
-export async function showNotification(title: string, body: string, tag: string): Promise<void> {
+export async function showNotification(rawTitle: string, rawBody: string, tag: string): Promise<void> {
+  const title = tr(rawTitle);
+  const body = tr(rawBody);
   if (isNativeApp()) {
     try {
       const { LocalNotifications } = await import("@capacitor/local-notifications");

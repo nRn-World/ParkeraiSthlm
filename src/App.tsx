@@ -99,6 +99,7 @@ import {
   type LatLng,
   type TariffId,
 } from "./data";
+import { LOCALE, lang, setLang } from "./i18n";
 
 type Category = "all" | "free" | "garage" | "street" | "disabled" | "ev" | "mc" | "resident" | TariffId;
 type NavigationStep = { instruction: string; distance: number; location: LatLng };
@@ -555,7 +556,7 @@ function formatServiceOccurrence(occurrence: ServiceOccurrence, now: Date) {
   tomorrow.setDate(tomorrow.getDate() + 1);
   if (startDay.getTime() === today.getTime()) return `Idag ${time}`;
   if (startDay.getTime() === tomorrow.getTime()) return `I morgon ${time}`;
-  return `${occurrence.start.toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long" })} ${time}`;
+  return `${occurrence.start.toLocaleDateString(LOCALE, { weekday: "long", day: "numeric", month: "long" })} ${time}`;
 }
 
 function residentPermitOf(text: string | null | undefined): ResidentPermitInfo | null {
@@ -589,7 +590,7 @@ function officialDistrictOf(place: ParkingPlace) {
 
 function formatFeeAmount(total: number) {
   const rounded = Math.round(total * 100) / 100;
-  return `${rounded.toLocaleString("sv-SE", {
+  return `${rounded.toLocaleString(LOCALE, {
     minimumFractionDigits: Number.isInteger(rounded) ? 0 : 2,
     maximumFractionDigits: 2,
   })} kr`;
@@ -730,7 +731,7 @@ function placeListCopy(place: ParkingPlace) {
 }
 
 function formatClock(date: Date) {
-  return date.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
 }
 
 function formatDuration(ms: number) {
@@ -1753,6 +1754,29 @@ function addNearbyStreetAddresses(places: ParkingPlace[]): ParkingPlace[] {
   return changed ? enriched : places;
 }
 
+// Små SVG-flaggor (emoji-flaggor syns som bokstäver i Windows).
+function FlagSE() {
+  return (
+    <svg viewBox="0 0 16 10" width="18" height="12" aria-hidden="true">
+      <rect width="16" height="10" fill="#006AA7" />
+      <rect x="5" width="2" height="10" fill="#FECC02" />
+      <rect y="4" width="16" height="2" fill="#FECC02" />
+    </svg>
+  );
+}
+
+function FlagGB() {
+  return (
+    <svg viewBox="0 0 60 40" width="18" height="12" aria-hidden="true">
+      <rect width="60" height="40" fill="#012169" />
+      <path d="M0 0l60 40M60 0L0 40" stroke="#fff" strokeWidth="8" />
+      <path d="M0 0l60 40M60 0L0 40" stroke="#C8102E" strokeWidth="3" />
+      <path d="M30 0v40M0 20h60" stroke="#fff" strokeWidth="13" />
+      <path d="M30 0v40M0 20h60" stroke="#C8102E" strokeWidth="8" />
+    </svg>
+  );
+}
+
 function App() {
   const mapNodeRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -2405,7 +2429,7 @@ function App() {
       
       if (window.navigator.onLine) {
         setClickedLoading(true);
-        fetch(`https://nominatim.openstreetmap.org/reverse?lat=${pos[0]}&lon=${pos[1]}&format=jsonv2&zoom=18&accept-language=sv`)
+        fetch(`https://nominatim.openstreetmap.org/reverse?lat=${pos[0]}&lon=${pos[1]}&format=jsonv2&zoom=18&accept-language=${lang}`)
           .then((res) => {
             if (!res.ok) throw new Error("reverse-geocoding-failed");
             return res.json();
@@ -2967,7 +2991,7 @@ function App() {
         limit: "5",
         countrycodes: "se",
         addressdetails: "1",
-        "accept-language": "sv",
+        "accept-language": lang,
         bounded: "1",
         viewbox: "17.75,59.48,18.35,59.15",
       });
@@ -3829,6 +3853,10 @@ function App() {
             {online ? <Wifi size={14} /> : <WifiOff size={14} />}
             <span>{online ? "Live" : "Offline"}</span>
           </button>
+          <button className="theme-toggle lang-toggle" type="button" onClick={() => setLang(lang === "en" ? "sv" : "en")} aria-label={lang === "en" ? "Byt till svenska" : "Switch to English"} translate="no">
+            <span className="lang-flag">{lang === "en" ? <FlagSE /> : <FlagGB />}</span>
+            {lang === "en" ? "SV" : "EN"}
+          </button>
           <button className="theme-toggle" type="button" onClick={() => setDarkMode(!darkMode)} aria-label="Växla tema">
             {darkMode ? <Sun size={17} /> : <Moon size={17} />}
           </button>
@@ -4203,7 +4231,7 @@ function App() {
               <div className="place-fact"><small>Pris</small><strong>{selectedParking.free ? "Gratis" : selectedParkingTariff ? getCurrentPrice(selectedParkingTariff).label : compactPriceText(selectedParking.priceText)}</strong></div>
               <div className="place-fact"><small>Avstånd</small><strong>{formatDistance(distanceKm(focusPosition, [selectedParking.lat, selectedParking.lng]))}</strong></div>
               {selectedParking.spaces ? <div className="place-fact"><small>Platser</small><strong>{selectedParking.spaces}</strong></div> : null}
-              {(selectedParking.disabledSpaces ?? 0) > 0 ? <div className="place-fact"><small>Handikapp</small><strong>{selectedParking.disabledSpaces} plats{selectedParking.disabledSpaces !== 1 ? "er" : ""}</strong></div> : null}
+              {(selectedParking.disabledSpaces ?? 0) > 0 ? <div className="place-fact"><small>Handikapp</small><strong>{`${selectedParking.disabledSpaces} ${selectedParking.disabledSpaces !== 1 ? "platser" : "plats"}`}</strong></div> : null}
               {(selectedParking.mcSpaces ?? 0) > 0 ? <div className="place-fact"><small>MC</small><strong>{selectedParking.mcSpaces} plats{selectedParking.mcSpaces !== 1 ? "er" : ""}</strong></div> : null}
               {(selectedParking.evSpaces ?? 0) > 0 ? (
                 <div className="place-ev-details">
@@ -4549,7 +4577,7 @@ function App() {
               <h2 id="parked-car-title">Var parkerade jag?</h2>
               {parkedCar && !parkedCarEditing ? (
                 <>
-                  <p className="saved-car-status"><Clock3 size={15} /> Sparad {new Date(parkedCar.savedAt).toLocaleString("sv-SE", { dateStyle: "medium", timeStyle: "short" })}</p>
+                  <p className="saved-car-status"><Clock3 size={15} /> Sparad {new Date(parkedCar.savedAt).toLocaleString(LOCALE, { dateStyle: "medium", timeStyle: "short" })}</p>
                   <div className={`car-price-card ${parkedCarPrice ? (parkedCarPrice.amount === 0 ? "is-free" : "is-paid") : "is-unknown"}`}>
                     <span className="car-price-amount">
                       {parkedCarPrice ? (parkedCarPrice.amount === 0 ? "Gratis just nu" : `${parkedCarPrice.amount} kr/tim just nu`) : "Taxa ej karterad här"}
