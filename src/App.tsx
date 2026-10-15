@@ -4705,6 +4705,17 @@ function App() {
                 <span><strong>Gratis</strong> utan konto</span>
                 <span><strong>Offline</strong> när du vill</span>
               </div>
+              <div className="support-card">
+                <img src={`${import.meta.env.BASE_URL}kofi-coffee.png`} alt="" className="support-coffee-icon" width={72} height={72} />
+                <div className="support-content">
+                  <h3 className="support-title">☕ THE WALL OF FAME</h3>
+                  <p className="support-desc">Stöd utvecklingen av ParkiSthlm genom att bjuda mig på en kaffe. Ditt bidrag hjälper till att hålla appen gratis, utan reklam och i ständig förbättring!</p>
+                  <a href="https://ko-fi.com/nrnworld" target="_blank" rel="noreferrer" className="support-kofi-btn" onClick={(event) => { event.preventDefault(); openExternalUrl("https://ko-fi.com/nrnworld"); }}>
+                    <img src={`${import.meta.env.BASE_URL}kofi-coffee.png`} alt="" width={18} height={18} />
+                    <span>Klicka här för att bjuda på en kaffe</span>
+                  </a>
+                </div>
+              </div>
               <div className="about-grid">
                 {[
                   { icon: <Wallet size={18} />, title: "Taxor", text: "Priser och tider från Stockholms stad. Helgdagar och lokala avvikelser kan förekomma." },
@@ -4723,17 +4734,6 @@ function App() {
                     <small>{item.text}</small>
                   </div>
                 ))}
-              </div>
-              <div className="support-card">
-                <img src={`${import.meta.env.BASE_URL}kofi-coffee.png`} alt="" className="support-coffee-icon" width={72} height={72} />
-                <div className="support-content">
-                  <h3 className="support-title">☕ THE WALL OF FAME</h3>
-                  <p className="support-desc">Stöd utvecklingen av ParkiSthlm genom att bjuda mig på en kaffe. Ditt bidrag hjälper till att hålla appen gratis, utan reklam och i ständig förbättring!</p>
-                  <a href="https://ko-fi.com/nrnworld" target="_blank" rel="noreferrer" className="support-kofi-btn" onClick={(event) => { event.preventDefault(); openExternalUrl("https://ko-fi.com/nrnworld"); }}>
-                    <img src={`${import.meta.env.BASE_URL}kofi-coffee.png`} alt="" width={18} height={18} />
-                    <span>Klicka här för att bjuda på en kaffe</span>
-                  </a>
-                </div>
               </div>
               <div className="warning-box"><CircleAlert size={18} /><span><strong>Viktigt:</strong> Vägmärken och skyltning på plats gäller alltid före kartan.</span></div>
               <div className="source-links">

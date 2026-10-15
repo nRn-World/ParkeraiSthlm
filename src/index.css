@@ -4174,6 +4174,8 @@ a:focus-visible {
   letter-spacing: -0.02em;
 }
 
+.about-sheet .support-card { margin: 0 0 14px; }
+
 .about-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
