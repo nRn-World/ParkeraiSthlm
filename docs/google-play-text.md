@@ -98,7 +98,7 @@ och är inte gjord för barn, så du slipper Families Policy.
 | Bild | Krav | Var den finns |
 | --- | --- | --- |
 | Butiksikon | 512×512 px, 32-bitars PNG med alfakanal, max 1 024 kB | [play-icon-512.png](../public/play-icon-512.png) (11 kB) |
-| Grafisk bild | 1 024×500 px, JPEG eller 24-bitars PNG utan alfakanal | [play-feature-1024x500.png](../public/play-feature-1024x500.png) |
+| Grafisk bild | 1 024×500 px, JPEG eller 24-bitars PNG utan alfakanal | [play-feature-banner.png](../public/play-feature-banner.png) |
 | Telefonbilder | Minst 2, fyra rekommenderas i 1080×1920 (JPEG eller PNG utan alfakanal) | Fem färdiga i [`store/`](../store): karta med lista, helskärmskarta, platskort, elbilsladdning, offline |
 | Surfplattebilder | Fyra bilder, 1 080–7 680 px, 16:9 liggande eller 9:16 stående | Behövs bara för surfplattor i butiken – tas med fördel i en surfplatte-emulator |
 

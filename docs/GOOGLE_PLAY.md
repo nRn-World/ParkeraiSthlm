@@ -26,7 +26,7 @@ Console ligger i [google-play-text.md](google-play-text.md).
 | Ikoner och startbilder | `android/app/src/main/res/mipmap-*` och `drawable-*` | Adaptiv ikon, rund ikon och startbilder för alla densiteter, ljust och mörkt tema |
 | Systemknappen Tillbaka | `src/native.ts` | Stänger det översta lagret (samma ordning som Escape på webben). Är inget öppet minimeras appen i stället för att stängas |
 | Offline-karta | `src/tile-cache.ts` | Service workers finns inte i den inbyggda appen, så kartrutorna sparas i IndexedDB |
-| Butiksmaterial | `public/play-icon-512.png`, `public/play-feature-1024x500.png` | Framtagna av `node scripts/make-app-assets.mjs` i exakt de mått Google kräver |
+| Butiksmaterial | `public/play-icon-512.png`, `public/play-feature-banner.png` | Framtagna av `node scripts/make-app-assets.mjs` i exakt de mått Google kräver |
 | Skärmbilder | `store/*.png` | Fem bilder tagna från den körda appen, 1 344 × 2 688 (2:1) |
 | Historik och statistik | `index.html`, `src/main.tsx` | Ingen statistik och ingen service worker i den inbyggda appen |
 | Integritetspolicy och support | `public/privacy.html`, `public/support.html` | Krävs på både butikssidan och i appen – länken finns i appens "i"-ruta |
@@ -124,7 +124,7 @@ datorn efteråt.
      inifrån appen, vilket den gör via "i"-rutan.
 4. **Butiksmaterial** – allt ligger färdigt i repot:
    - butiksikon: `public/play-icon-512.png` (512 × 512, 32-bitars PNG **med** alfakanal)
-   - grafisk bild: `public/play-feature-1024x500.png` (1 024 × 500, 24-bitars PNG **utan** alfakanal)
+   - grafisk bild: `public/play-feature-banner.png` (1 024 × 500, 24-bitars PNG **utan** alfakanal)
    - telefonbilder: `store/01-karta-och-lista.png`, `02-karta.png`, `03-parkeringsplats.png`,
      `04-elbilsladdning.png`, `05-offline.png` (1 344 × 2 688, alltså exakt 2:1)
    - texterna: [google-play-text.md](google-play-text.md)

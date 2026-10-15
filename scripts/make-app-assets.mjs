@@ -6,7 +6,6 @@
 //   public/icon-<storlek>.png    – webbappens ikoner och favicon
 //   public/icon-1024.png         – 1024x1024, helt utan genomskinlighet (App Store kräver det)
 //   public/play-icon-512.png     – 512x512, 32-bitars PNG med alfakanal (Google Plays krav)
-//   public/play-feature-1024x500.png – 1024x500 utan alfakanal (Google Plays krav)
 //   assets/logo.png              – samma ikon som @capacitor/assets använder för ios/android
 //
 // Apple och Google har motsatta krav på alfakanalen, därav två varianter av ikonen.
@@ -54,33 +53,6 @@ if (!playIconMeta.hasAlpha || playIconMeta.width !== 512 || playIconMeta.height 
 }
 await writeFile(path.join(root, "public", "play-icon-512.png"), playIcon);
 
-// Grafisk bild till butikssidan: 1024x500 utan alfakanal, med ikonen på appens mörka
-// bottenfärg. Byt gärna ut den mot en egen bild med rubrik.
-const featureIcon = await sharp(logo)
-  .resize(400, 400, { fit: "contain", background: BACKGROUND })
-  .flatten({ background: BACKGROUND })
-  .png()
-  .toBuffer();
-const featureGraphic = await sharp({
-  create: { width: 1024, height: 500, channels: 3, background: "#0b1119" },
-})
-  .composite([{ input: featureIcon, gravity: "center" }])
-  .flatten({ background: "#0b1119" })
-  // Google vill ha 24-bitars PNG utan alfakanal här, och composite lägger till en kanal.
-  .removeAlpha()
-  .png({ compressionLevel: 9 })
-  .toBuffer();
-const featureMeta = await sharp(featureGraphic).metadata();
-if (featureMeta.hasAlpha || featureMeta.width !== 1024 || featureMeta.height !== 500) {
-  throw new Error(`Grafiska bilden blev ${featureMeta.width}x${featureMeta.height}, alfakanal: ${featureMeta.hasAlpha}.`);
-}
-await writeFile(path.join(root, "public", "play-feature-1024x500.png"), featureGraphic);
-
-const WEB_SIZES = [48, 72, 96, 128, 144, 152, 168, 180, 192, 384, 512];
-for (const size of WEB_SIZES) {
-  await sharp(iconPng).resize(size, size).png({ compressionLevel: 9 }).toFile(path.join(root, "public", `icon-${size}.png`));
-}
-
 // Samma ikon som logo för @capacitor/assets.
 const assetsDir = path.join(root, "assets");
 await mkdir(assetsDir, { recursive: true });
@@ -88,6 +60,5 @@ await writeFile(path.join(assetsDir, "logo.png"), iconPng);
 
 console.log(`public/icon-1024.png klar (${meta.width}x${meta.height}, alfakanal: ${meta.hasAlpha ? "ja" : "nej"})`);
 console.log(`public/play-icon-512.png klar (${playIconMeta.width}x${playIconMeta.height}, alfakanal: ja)`);
-console.log(`public/play-feature-1024x500.png klar (${featureMeta.width}x${featureMeta.height}, alfakanal: nej)`);
 console.log(`public/icon-{${WEB_SIZES.join(",")}}.png klara`);
 console.log("assets/logo.png klar");
