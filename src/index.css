@@ -100,10 +100,41 @@ a:focus-visible {
   transition: transform 0.36s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.28s ease;
 }
 
+/* Sökfältet och filtren syns alltid; bara listan fälls in. */
 .map-panel:not(.panel-open) {
-  transform: translateX(calc(-100% - 28px));
-  opacity: 0;
-  pointer-events: none;
+  bottom: auto;
+}
+
+.map-panel:not(.panel-open):not(.search-active) .panel-body {
+  display: none;
+}
+
+.list-toggle {
+  display: flex;
+  width: calc(100% - 28px);
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 2px 14px 14px;
+  padding: 0;
+  border: 1px solid rgba(218, 226, 225, 0.9);
+  border-radius: 11px;
+  color: #1266ee;
+  background: rgba(18, 102, 238, 0.06);
+  font-size: 11px;
+  font-weight: 740;
+  cursor: pointer;
+}
+
+.panel-open .list-toggle {
+  margin-bottom: 8px;
+}
+
+.dark .list-toggle {
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #7fb0ff;
+  background: rgba(127, 176, 255, 0.08);
 }
 
 .brand-row {
@@ -917,15 +948,12 @@ a:focus-visible {
   position: absolute;
   z-index: 800;
   top: 17px;
-  left: 17px;
+  left: 422px;
   display: flex;
   gap: 7px;
   transition: left 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.panel-open ~ .map-top-actions {
-  left: 422px;
-}
 
 .map-top-actions button,
 .map-controls button {
@@ -2665,10 +2693,6 @@ a:focus-visible {
     border-radius: 18px;
   }
 
-  .map-panel:not(.panel-open) {
-    transform: translateY(calc(-100% - 22px));
-  }
-
   .mobile-menu {
     display: grid;
     width: 34px;
@@ -4081,48 +4105,5 @@ a:focus-visible {
     width: 100%;
     max-height: calc(100dvh - 20px);
     border-radius: 22px;
-  }
-}
-
-
-/* Flik på panelens kant som fäller ut/in parkeringslistan (bara på dator; mobilen har menyknappen). */
-.panel-tab {
-  position: absolute;
-  z-index: 901;
-  top: 50%;
-  left: 0;
-  display: grid;
-  width: 24px;
-  height: 64px;
-  place-items: center;
-  padding: 0;
-  border: 1px solid rgba(218, 226, 225, 0.9);
-  border-left: 0;
-  border-radius: 0 12px 12px 0;
-  color: #1266ee;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 4px 0 16px rgba(36, 50, 58, 0.14);
-  cursor: pointer;
-  transform: translateY(-50%);
-  transition: left 0.36s cubic-bezier(0.22, 1, 0.36, 1), background 0.18s ease;
-}
-
-.panel-tab.panel-open {
-  left: 406px;
-}
-
-.panel-tab:hover {
-  background: #fff;
-}
-
-.dark .panel-tab {
-  border-color: rgba(255, 255, 255, 0.14);
-  color: #7fb0ff;
-  background: rgba(17, 26, 38, 0.96);
-}
-
-@media (max-width: 860px) {
-  .panel-tab {
-    display: none;
   }
 }

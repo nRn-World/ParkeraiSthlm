@@ -52,8 +52,6 @@ import {
   ExternalLink,
   Heart,
   Info,
-  ChevronLeft,
-  ChevronRight,
   ListFilter,
   LocateFixed,
   Map as MapIcon,
@@ -3812,7 +3810,7 @@ function App() {
     <main className={`app-shell ${online ? "is-online" : "is-offline"}`}>
       <div ref={mapNodeRef} className="map-canvas" aria-label="Karta över parkeringsplatser och taxeområden i Stockholm" />
 
-      <section className={`map-panel ${panelOpen ? "panel-open" : ""}`} aria-label="Parkeringssökning">
+      <section className={`map-panel ${panelOpen ? "panel-open" : ""} ${searchFocused ? "search-active" : ""}`} aria-label="Parkeringssökning">
         <header className="brand-row">
           <button className="mobile-menu" type="button" onClick={() => setPanelOpen((open) => !open)} aria-label="Öppna meny">
             {panelOpen ? <X size={20} /> : <Menu size={20} />}
@@ -3950,6 +3948,11 @@ function App() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        <button type="button" className="list-toggle" onClick={() => setPanelOpen((open) => !open)} aria-expanded={panelOpen}>
+          <ListFilter size={15} /> <span>{panelOpen ? "Dölj parkeringslistan" : "Visa parkeringslistan"}</span>
+          {panelOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
 
         <div className="panel-body">
           {searchFocused && !query ? (
@@ -4133,10 +4136,6 @@ function App() {
           </div>
         </div>
       </section>
-
-      <button type="button" className={`panel-tab ${panelOpen ? "panel-open" : ""}`} onClick={() => setPanelOpen((open) => !open)} aria-label={panelOpen ? "Dölj parkeringslistan" : "Visa parkeringslistan"} aria-expanded={panelOpen} title={panelOpen ? "Dölj listan" : "Visa listan"}>
-        {panelOpen ? <ChevronLeft size={18} /> : <ChevronRight size={18} />}
-      </button>
 
       <div className="map-top-actions" aria-label="Snabbåtgärder">
         <button type="button" onClick={() => setPanelOpen((open) => !open)} className="list-button" aria-label={panelOpen ? "Dölj parkeringslistan" : "Visa parkeringslistan"} aria-pressed={panelOpen} title={panelOpen ? "Dölj lista" : "Visa parkeringar"} data-mobile-label="Lista">
