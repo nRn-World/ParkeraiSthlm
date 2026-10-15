@@ -1,4 +1,4 @@
-package one.nrnworld.parkeraisthlm;
+package one.nrnworld.parkisthlm;
 
 import com.getcapacitor.BridgeActivity;
 

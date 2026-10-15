@@ -141,8 +141,8 @@ Appen visar Stockholms stads officiella fem taxeområden (Taxa 1–5) med korrek
 ### Steg 1 – Klona projektet
 
 ```bash
-git clone https://github.com/nRn-World/ParkeraiSthlm.git
-cd ParkeraiSthlm
+git clone https://github.com/nRn-World/ParkiSthlm.git
+cd ParkiSthlm
 ```
 
 ### Steg 2 – Installera beroenden
@@ -253,8 +253,8 @@ npm run ios:open      # öppnar projektet i Xcode (kräver macOS)
   telefonens webbläsare och besöksstatistiken är avstängd. Se [src/native.ts](./src/native.ts).
 - Eftersom service workers inte finns på `capacitor://` sparas offline-kartans rutor i
   IndexedDB i stället: [src/tile-cache.ts](./src/tile-cache.ts).
-- Integritetspolicy: <https://nrnworld.one/ParkeraiSthlm/privacy.html> ·
-  Support: <https://nrnworld.one/ParkeraiSthlm/support.html>
+- Integritetspolicy: <https://nrnworld.one/ParkiSthlm/privacy.html> ·
+  Support: <https://nrnworld.one/ParkiSthlm/support.html>
 
 ---
 
@@ -270,19 +270,23 @@ cd android && ./gradlew bundleRelease
 ```
 
 Den signerade appbunten hamnar i `android/app/build/outputs/bundle/release/app-release.aab`.
-Android Gradle Plugin vill ha JDK 21, så kör bygget med Android Studios egen Java om din
-`java -version` är nyare:
+Android Gradle Plugin 8.13 vill ha JDK 17 eller 21 och Gradle 8.14.3 stödjer inte JDK 25, så
+kör bygget med Android Studios egen Java om din `java -version` är nyare:
 
 ```bash
 export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"
 ```
+
+På den här datorn räcker det med JDK 17 i PATH, till exempel
+`export JAVA_HOME="/c/Program Files/Java/jdk-17"`.
 
 - **Uppladdningsnyckeln** skapas med `node scripts/make-upload-keystore.mjs` och ligger i
   `~/.parkeraisthlm/` tillsammans med en git-ignorerad `android/keystore.properties`.
 - **Bygga utan Android Studio:** [.github/workflows/android.yml](./.github/workflows/android.yml)
   bygger appbunten i molnet. Se [docs/GOOGLE_PLAY.md](./docs/GOOGLE_PLAY.md).
 - **Butikstext, bilder och datasäkerhetssvar:**
-  [docs/google-play-text.md](./docs/google-play-text.md).
+  [docs/google-play-text.md](./docs/google-play-text.md). Butiksikonen och den grafiska bilden
+  ligger i `public/`, och fem färdiga telefonbilder i [`store/`](./store).
 - I den inbyggda appen stänger systemknappen Tillbaka det översta lagret i stället för att
   lämna appen, och offline-kartans rutor sparas i IndexedDB eftersom service workers inte
   finns där.

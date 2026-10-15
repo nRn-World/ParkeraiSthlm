@@ -7,18 +7,18 @@ max antal tecken. Ändra fritt – men kontrollera längden om du skriver om.
 
 | Fält | Värde |
 | --- | --- |
-| Apple-ID (bundle ID) | `one.nrnworld.parkeraisthlm` |
-| Namn (30) | `ParkeraiSthlm` |
+| Apple-ID (bundle ID) | `one.nrnworld.parkisthlm` |
+| Namn (30) | `ParkiSthlm` |
 | Underrubrik (30) | `Parkering & taxor i Stockholm` |
 | Kategori | Primär: **Navigation** · Sekundär: **Travel** |
 | Åldersgräns | 4+ (frågeformuläret avgör: inga användargenererade texter, inget socialt, ingen reklam och ingen fri webbläsning – bara supportsidan) |
 | Copyright | `© 2026 nRn World` |
-| Support-URL | `https://nrnworld.one/ParkeraiSthlm/support.html` |
-| Marknadsförings-URL | `https://nrnworld.one/ParkeraiSthlm/` |
-| Integritetspolicy-URL | `https://nrnworld.one/ParkeraiSthlm/privacy.html` |
+| Support-URL | `https://nrnworld.one/ParkiSthlm/support.html` |
+| Marknadsförings-URL | `https://nrnworld.one/ParkiSthlm/` |
+| Integritetspolicy-URL | `https://nrnworld.one/ParkiSthlm/privacy.html` |
 | Appens språk | Svenska (engelska texter finns i integritetspolicyn) |
 
-Namnet kontrolleras mot hela App Store när appen skapas. Är `ParkeraiSthlm` upptaget får du
+Namnet kontrolleras mot hela App Store när appen skapas. Är `ParkiSthlm` upptaget får du
 byta namn – bundle-ID:t och ikonen påverkas inte av det.
 
 ## Promotional text (170)
@@ -30,7 +30,7 @@ Parkeringskartan för Stockholm: fem taxeområden, garage, laddplatser och gatup
 ## Beskrivning (4000)
 
 ```
-ParkeraiSthlm visar var du får parkera i Stockholm, vad det kostar just nu och hur länge.
+ParkiSthlm visar var du får parkera i Stockholm, vad det kostar just nu och hur länge.
 
 Kartan täcker Stockholms fem ordinarie taxeområden med gatuparkering, garage, markparkering, laddplatser och platser som är markerade som gratis. Priset räknas ut för den tid du faktiskt står där, med dagens taxa, avgiftsperioder och gratistimmar.
 
@@ -60,7 +60,7 @@ BRA ATT VETA
 · Uppgifterna kommer från Stockholms stad, OpenStreetMap, Open Charge Map, Stockholm Parkering och Nobil
 · Vägmärken, skyltning och betalningsapp på plats gäller alltid före kartan
 
-ParkeraiSthlm är byggd för att vara snabb att öppna när du står vid bilen: ingen registrering, ingen reklam och inga köp inuti appen.
+ParkiSthlm är byggd för att vara snabb att öppna när du står vid bilen: ingen registrering, ingen reklam och inga köp inuti appen.
 ```
 
 ## Nyckelord (100, kommatecken, inga mellanslag efter kommatecken)
@@ -103,7 +103,7 @@ integritetspolicyn beskriva flödet, och det gör den.
 ## Granskningsnoter (App Review Information → Notes)
 
 ```
-ParkeraiSthlm är en parkeringskarta för Stockholm och kräver inget konto, ingen inloggning och inga köp. Ingen demoinloggning behövs.
+ParkiSthlm är en parkeringskarta för Stockholm och kräver inget konto, ingen inloggning och inga köp. Ingen demoinloggning behövs.
 
 Så testar du på 2 minuter:
 1. Tryck på den blå platsknappen till höger för att ge platsbehörighet (frågas bara då).

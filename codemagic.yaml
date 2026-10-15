@@ -11,13 +11,13 @@
 # Code signing identities, 4) kör arbetsflödet.
 workflows:
   ios-release:
-    name: ParkeraiSthlm – App Store
+    name: ParkiSthlm – App Store
     max_build_duration: 90
     instance_type: mac_mini_m2
 
     integrations:
       # Namnet du ger App Store Connect-nyckeln i Codemagic (inte nyckeln själv).
-      app_store_connect: ParkeraiSthlmAppStore
+      app_store_connect: ParkiSthlmAppStore
 
     environment:
       # Capacitor 8 kräver Xcode 26 eller senare och Node 22 eller senare.
@@ -25,7 +25,7 @@ workflows:
       node: v22.11.0
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: one.nrnworld.parkeraisthlm
+        bundle_identifier: one.nrnworld.parkisthlm
       vars:
         XCODE_PROJECT: "ios/App/App.xcodeproj"
         XCODE_SCHEME: "App"

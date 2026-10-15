@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>sv</string>
 	<key>CFBundleDisplayName</key>
-	<string>ParkeraiSthlm</string>
+	<string>ParkiSthlm</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -37,7 +37,7 @@
 	<!-- Visas i behörighetsrutan när appen vill läsa din position. Kravet från Apple är
 	     att texten förklarar varför; utan den visas ingen ruta alls. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>ParkeraiSthlm använder din position för att visa var du är på kartan, hitta parkering nära dig och guida dig fram till en plats.</string>
+	<string>ParkiSthlm använder din position för att visa var du är på kartan, hitta parkering nära dig och guida dig fram till en plats.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

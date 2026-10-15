@@ -1,6 +1,6 @@
 {
-  "name": "ParkeraiSthlm",
-  "short_name": "ParkeraiSthlm",
+  "name": "ParkiSthlm",
+  "short_name": "ParkiSthlm",
   "id": "./",
   "description": "Hitta parkering, taxeomr\u00e5den och gatuparkeringsregler i Stockholm.",
   "lang": "sv-SE",
@@ -8,8 +8,8 @@
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#1266ee",
-  "theme_color": "#1266ee",
+  "background_color": "#040c1f",
+  "theme_color": "#040c1f",
   "categories": ["navigation", "travel", "utilities"],
   "icons": [
     { "src": "./icon-48.png", "sizes": "48x48", "type": "image/png" },

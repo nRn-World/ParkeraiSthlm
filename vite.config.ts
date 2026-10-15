@@ -27,7 +27,7 @@ function localDataProxy(env: Record<string, string>) {
       server.middlewares.use("/api/stockholm-parking", async (_req, res) => {
         try {
           await writeProxyResponse(await fetchWithTimeout("https://api.stockholmparkering.se:8084/SparkInfartsParkeringService.svc/GetAllAnlaggningParkeringsInfo", {
-            headers: { Accept: "application/json", "User-Agent": "Parkera-i-Stockholm-local" },
+            headers: { Accept: "application/json", "User-Agent": "ParkiSthlm-local" },
           }, 15_000), res);
         } catch {
           res.statusCode = 502;
@@ -48,7 +48,7 @@ function localDataProxy(env: Record<string, string>) {
         });
         try {
           await writeProxyResponse(await fetchWithTimeout(`https://api.openchargemap.io/v3/poi/?${params}`, {
-            headers: { "User-Agent": "Parkera-i-Stockholm-local" },
+            headers: { "User-Agent": "ParkiSthlm-local" },
           }), res);
         } catch {
           res.statusCode = 502;
@@ -114,7 +114,7 @@ function localDataProxy(env: Record<string, string>) {
         try {
           await writeProxyResponse(await fetchWithTimeout(
             `https://openparking.stockholm.se/LTF-Tolken/v1/${rule}/${fetchAll ? "all" : "within"}?${params}`,
-            { headers: { Accept: "application/json", "User-Agent": "Parkera-i-Stockholm-local" } },
+            { headers: { Accept: "application/json", "User-Agent": "ParkiSthlm-local" } },
             60_000,
           ), res);
         } catch {
@@ -130,7 +130,7 @@ function localDataProxy(env: Record<string, string>) {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   // Den inbyggda appen (Capacitor) laddar filerna från paketets rot, medan webbplatsen
-  // på GitHub Pages ligger under /ParkeraiSthlm/.
+  // på GitHub Pages ligger under /ParkiSthlm/.
   const isNativeBuild = mode === "native";
   return {
     base: isNativeBuild ? "/" : env.VITE_BASE_URL ?? "/",

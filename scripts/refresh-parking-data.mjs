@@ -34,7 +34,7 @@ async function saveJson(fileName, payload) {
 
 async function fetchStockholmParking() {
   const homepageResponse = await fetch("https://www.stockholmparkering.se/", {
-    headers: { "User-Agent": "ParkeraiSthlm-data-refresh" },
+    headers: { "User-Agent": "ParkiSthlm-data-refresh" },
   });
   if (!homepageResponse.ok) throw new Error(`Stockholm Parkering svarade ${homepageResponse.status}`);
   const homepage = await homepageResponse.text();
@@ -50,7 +50,7 @@ async function fetchStockholmParking() {
       headers: {
         Accept: "application/json",
         Language: "sv",
-        "User-Agent": "ParkeraiSthlm-data-refresh",
+        "User-Agent": "ParkiSthlm-data-refresh",
         "X-Requested-With": "XMLHttpRequest",
         "X-RequestVerificationToken": token,
         ...(cookies ? { Cookie: cookies } : {}),
@@ -175,7 +175,7 @@ for (const rule of ["pmotorcykel", "prorelsehindrad", "ptillaten"]) {
   });
   const payload = await fetchJson(
     `https://openparking.stockholm.se/LTF-Tolken/v1/${rule}/all?${params}`,
-    { headers: { Accept: "application/json", "User-Agent": "ParkeraiSthlm-data-refresh" } },
+    { headers: { Accept: "application/json", "User-Agent": "ParkiSthlm-data-refresh" } },
     rule,
   );
   await saveJson(`${rule}.json`, compactOfficial(payload));
@@ -195,7 +195,7 @@ const ocmParams = new URLSearchParams({
 });
 await saveJson("open-charge-map.json", compactOcm(await fetchJson(
   `https://api.openchargemap.io/v3/poi/?${ocmParams}`,
-  { headers: { "User-Agent": "ParkeraiSthlm-data-refresh" } },
+  { headers: { "User-Agent": "ParkiSthlm-data-refresh" } },
   "OpenChargeMap",
 )));
 

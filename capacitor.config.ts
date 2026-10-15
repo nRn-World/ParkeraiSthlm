@@ -5,8 +5,8 @@ import type { CapacitorConfig } from "@capacitor/cli";
 // körs i en macOS-miljö (eller i molnet, se docs/APPSTORE.md).
 const config: CapacitorConfig = {
   // App-ID:t kan inte ändras efter att appen har laddats upp till App Store.
-  appId: "one.nrnworld.parkeraisthlm",
-  appName: "ParkeraiSthlm",
+  appId: "one.nrnworld.parkisthlm",
+  appName: "ParkiSthlm",
   webDir: "dist",
   // Den inbyggda appen får aldrig peka på en extern server: allt ligger i paketet.
   server: {

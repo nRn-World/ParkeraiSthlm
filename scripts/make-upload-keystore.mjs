@@ -59,7 +59,7 @@ const result = spawnSync(keytool, [
   // inte syns i någon processlista.
   "-storepass:env", "PARKERA_STORE_PASS",
   "-keypass:env", "PARKERA_STORE_PASS",
-  "-dname", "CN=ParkeraiSthlm, OU=nRn World, O=nRn World, L=Stockholm, ST=Stockholm, C=SE",
+  "-dname", "CN=ParkiSthlm, OU=nRn World, O=nRn World, L=Stockholm, ST=Stockholm, C=SE",
 ], {
   stdio: "inherit",
   env: { ...process.env, PARKERA_STORE_PASS: password },

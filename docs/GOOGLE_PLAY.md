@@ -1,4 +1,4 @@
-# Publicera ParkeraiSthlm på Google Play
+# Publicera ParkiSthlm på Google Play
 
 Hela vägen från det här repot till en app i Google Play. Texten som ska klistras in i Play
 Console ligger i [google-play-text.md](google-play-text.md).
@@ -26,6 +26,8 @@ Console ligger i [google-play-text.md](google-play-text.md).
 | Ikoner och startbilder | `android/app/src/main/res/mipmap-*` och `drawable-*` | Adaptiv ikon, rund ikon och startbilder för alla densiteter, ljust och mörkt tema |
 | Systemknappen Tillbaka | `src/native.ts` | Stänger det översta lagret (samma ordning som Escape på webben). Är inget öppet minimeras appen i stället för att stängas |
 | Offline-karta | `src/tile-cache.ts` | Service workers finns inte i den inbyggda appen, så kartrutorna sparas i IndexedDB |
+| Butiksmaterial | `public/play-icon-512.png`, `public/play-feature-1024x500.png` | Framtagna av `node scripts/make-app-assets.mjs` i exakt de mått Google kräver |
+| Skärmbilder | `store/*.png` | Fem bilder tagna från den körda appen, 1 344 × 2 688 (2:1) |
 | Historik och statistik | `index.html`, `src/main.tsx` | Ingen statistik och ingen service worker i den inbyggda appen |
 | Integritetspolicy och support | `public/privacy.html`, `public/support.html` | Krävs på både butikssidan och i appen – länken finns i appens "i"-ruta |
 | Molnbygge | `.github/workflows/android.yml` | Bygger signerad .aab på en GitHub-maskin, utan Android Studio |
@@ -106,7 +108,7 @@ datorn efteråt.
 
 1. Skapa kontot på <https://play.google.com/console> (25 USD), välj kontotyp och verifiera
    identiteten. Väljer du privat konto: räkna med testrundan på 12 testare i 14 dagar.
-2. **Skapa app:** namn `ParkeraiSthlm`, standardspråk svenska, app (inte spel), gratis.
+2. **Skapa app:** namn `ParkiSthlm`, standardspråk svenska, app (inte spel), gratis.
 3. **Appinnehåll** – alla formulär måste fyllas i innan publicering:
    - *Åtkomst till appen:* inga inloggningar eller begränsade ytor. Inga testuppgifter behövs.
    - *Annonser:* nej.
@@ -118,11 +120,23 @@ datorn efteråt.
    - *Datasäkerhet:* se svaren i [google-play-text.md](google-play-text.md). Positionsdata
      lämnar telefonen till routing- och adresstjänster när du startar en rutt eller söker,
      och det ska deklareras.
-   - *Integritetspolicy:* `https://nrnworld.one/ParkeraiSthlm/privacy.html` – måste också nås
+   - *Integritetspolicy:* `https://nrnworld.one/ParkiSthlm/privacy.html` – måste också nås
      inifrån appen, vilket den gör via "i"-rutan.
-4. **Butiksmaterial:** ikon 512×512 (PNG med genomskinlighet), grafisk bild 1 024×500,
-   minst två telefonbilder (fyra i 1080×1920 rekommenderas) och fyra surfplattebilder.
-   Texterna ligger färdiga i [google-play-text.md](google-play-text.md).
+4. **Butiksmaterial** – allt ligger färdigt i repot:
+   - butiksikon: `public/play-icon-512.png` (512 × 512, 32-bitars PNG **med** alfakanal)
+   - grafisk bild: `public/play-feature-1024x500.png` (1 024 × 500, 24-bitars PNG **utan** alfakanal)
+   - telefonbilder: `store/01-karta-och-lista.png`, `02-karta.png`, `03-parkeringsplats.png`,
+     `04-elbilsladdning.png`, `05-offline.png` (1 344 × 2 688, alltså exakt 2:1)
+   - texterna: [google-play-text.md](google-play-text.md)
+
+   Bilderna i `store/` är tagna direkt från appen som kördes på en Pixel 8 Pro-emulator
+   (Android 15), inte renderade på nytt i efterhand. Google tillåter mellan 320 och 3 840
+   pixlar per sida och högst 2:1 i förhållande – en skärm på 1 344 × 2 992 är 2,2:1 och
+   beskärs därför till 1 344 × 2 688. Vill du ta nya bilder: starta appen, koppla upp mot
+   webvyn (`adb forward tcp:9226 localabstract:webview_devtools_remote_<pid>`) och spara
+   `adb exec-out screencap -p`. Ta skärmdumpen med adb och inte genom fjärrfelsökningen –
+   WebGL-kartan blir tom i den senare. Surfplattebilder (fyra stycken) behövs bara om du
+   vill att appen visas på surfplattor i butiken.
 5. **Testa:** ladda upp appbunten under *Testning → Intern testning* först, sedan *Sluten
    testning* med dina 12 testare i 14 dagar, och ansök därefter om produktion.
 6. **Publicera:** rulla ut till produktion när granskningen är klar. Granskningen tar oftast
@@ -140,18 +154,48 @@ datorn efteråt.
   Vill du slippa behörigheten kan du ta bort den ur manifestet med manifest-merge, men då
   kan notiserna bli något fördröjda.
 
+Det sammanslagna release-manifestet innehåller exakt de här behörigheterna:
+`ACCESS_COARSE_LOCATION`, `ACCESS_FINE_LOCATION`, `ACCESS_NETWORK_STATE`, `INTERNET`,
+`POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`, `SCHEDULE_EXACT_ALARM` och `WAKE_LOCK`.
+Utöver positionen och aviseringarna kommer alltså bara `RECEIVE_BOOT_COMPLETED` och
+`WAKE_LOCK` från notisplugin:en. Det finns **inget** `USE_EXACT_ALARM` (den begränsade
+varianten som kräver en egen deklaration), ingen `ACCESS_BACKGROUND_LOCATION` och inget
+`AD_ID` – alltså inga av de behörigheter som drar på sig extra formulär i Play Console.
+
+## Vad som är provat i den byggda appen
+
+Appen byggdes och kördes på en emulator (Pixel 8 Pro, Android 15), och det här är mätt i den
+körande appen – inte bara läst i koden:
+
+| Kontroll | Resultat |
+| --- | --- |
+| Appen startar och gränssnittet ritas | Ja, 154 parkeringar i listan |
+| Baskartan laddas | 14 kartrutor från OpenStreetMap, noll misslyckade anrop |
+| Offline-karta | 185 rutor nedladdade (180 av 180 lyckade) och sparade i telefonens IndexedDB. I flygplansläge laddar appen om med **noll** anrop till kartservern och ritar kartan från cachen |
+| Systemknappen Tillbaka | Stänger det översta lagret; appen ligger kvar i förgrunden |
+| Aviseringsbehörigheten | `requestPermissions` svarar `granted` |
+| Platsbehörigheten | Beviljad och positionen används |
+| Kantzoner | Webvyn ligger innanför statusrad och gestlist – inget hamnar under systemknapparna |
+
+Det som **inte** går att prova förrän appen ligger på en riktig telefon: de inbyggda
+notiserna (P-skivan och påminnelsen om bilens plats), platsrutan mot riktig GPS, länkarna ut
+till Google Maps/Waze/Apple Kartor och offline-kartan på en enhet med egen lagring. Provkör
+därför appbunten på en telefon innan du laddar upp.
+
 ## Checklista innan uppladdning
 
 - [ ] Konto och identitetsverifiering klara i Play Console
-- [ ] Appen skapad med paketnamnet `one.nrnworld.parkeraisthlm`
+- [ ] Appen skapad med paketnamnet `one.nrnworld.parkisthlm`
 - [ ] `android/keystore.properties` och nyckelfilen undanlagda på ett säkert ställe
-- [ ] Signerad appbunt byggd och provkörd på en riktig Android-telefon
-- [ ] Platsbehörigheten och aviseringsbehörigheten provade på enheten, inklusive nekat svar
-- [ ] Systemknappen Tillbaka stänger lager i stället för att lämna appen
-- [ ] Offline-kartan provad med flygplansläge på
+- [x] Signerad appbunt byggd (`android/app/build/outputs/bundle/release/app-release.aab`, 5,1 MB)
+- [ ] Appbunten provkörd på en riktig Android-telefon
+- [x] Platsbehörigheten och aviseringsbehörigheten provade i appen (beviljat svar)
+- [ ] Behörigheterna provade med **nekat** svar
+- [x] Systemknappen Tillbaka stänger lager i stället för att lämna appen
+- [x] Offline-kartan provad med flygplansläge på
 - [ ] Datasäkerhetsformuläret ifyllt, inklusive position till routingtjänsten
 - [ ] Integritetspolicy och support-URL ifyllda och läsbara
-- [ ] Butikstexter och bilder uppladdade
+- [ ] Butikstexter, ikon, grafisk bild och skärmbilder uppladdade
 - [ ] Testrunda genomförd (privat konto: 12 testare i 14 dagar i följd)
 
 ## Släppa en ny version

@@ -35,7 +35,7 @@ jobs:
       - name: Bygg appen
         run: npm run build
         env:
-          VITE_BASE_URL: /ParkeraiSthlm/
+          VITE_BASE_URL: /ParkiSthlm/
 
       - name: Konfigurera GitHub Pages
         uses: actions/configure-pages@v5

@@ -2,9 +2,9 @@
 //
 //   node scripts/native-assets.mjs
 //
-// Steg 1: public/icon.svg -> public/icon-1024.png (ogenomskinlig, App Stores krav)
-//         och assets/logo.svg
-// Steg 2: assets/logo.svg -> ios/App/App/Assets.xcassets och android/app/src/main/res
+// Steg 1: assets/logo-source.png -> public/icon-*.png (ogenomskinlig, App Stores krav)
+//         och assets/logo.png
+// Steg 2: assets/logo.png -> ios/App/App/Assets.xcassets och android/app/src/main/res
 //         – bara för de plattformar som faktiskt är tillagda.
 //
 // Färgerna skickas som argument i stället för på kommandoraden, eftersom citattecken
@@ -43,8 +43,8 @@ if (!platforms.length) {
 run(processor, [
   "generate",
   ...platforms.map((platform) => platform.flag),
-  "--iconBackgroundColor", "#1266ee",
+  "--iconBackgroundColor", "#040c1f",
   "--iconBackgroundColorDark", "#0b1119",
-  "--splashBackgroundColor", "#1266ee",
+  "--splashBackgroundColor", "#040c1f",
   "--splashBackgroundColorDark", "#0b1119",
 ], "Ikonerna och startbilderna");

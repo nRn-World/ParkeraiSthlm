@@ -1,4 +1,4 @@
-# Publicera ParkeraiSthlm i App Store
+# Publicera ParkiSthlm i App Store
 
 Den här filen är hela vägen från det här repot till en app i App Store, steg för steg.
 Texten som ska klistras in i App Store Connect ligger i [appstore-text.md](appstore-text.md).
@@ -17,7 +17,7 @@ Texten som ska klistras in i App Store Connect ligger i [appstore-text.md](appst
 | Del | Var | Kommentar |
 | --- | --- | --- |
 | iOS-projekt (Xcode, Swift Package Manager) | `ios/App` | Genererat med Capacitor 8.5.3, öppnas med `npm run ios:open` |
-| Appens ID och namn | `ios/App/App.xcodeproj` + `capacitor.config.ts` | `one.nrnworld.parkeraisthlm`, namnet `ParkeraiSthlm` |
+| Appens ID och namn | `ios/App/App.xcodeproj` + `capacitor.config.ts` | `one.nrnworld.parkisthlm`, namnet `ParkiSthlm` |
 | Ikon 1024×1024 utan genomskinlighet | `public/icon-1024.png` → `ios/App/App/Assets.xcassets/AppIcon.appiconset` | App Store kräver ogenomskinlig 1024-ikon |
 | Startbild, ljust och mörkt tema | `ios/App/App/Assets.xcassets/Splash.imageset` | Genereras av `npm run assets:native` |
 | Platsbehörighetens förklaringstext | `ios/App/App/Info.plist` | Utan den visas ingen behörighetsruta i iOS |
@@ -25,8 +25,8 @@ Texten som ska klistras in i App Store Connect ligger i [appstore-text.md](appst
 | Exportefterlevnad | `ios/App/App/Info.plist` | `ITSAppUsesNonExemptEncryption = false` (bara systemets egen kryptering används) |
 | Aviseringar, GPS och externa länkar | `src/native.ts` | Riktiga systemnotiser, inbyggd GPS och länkar som lämnar appen – webbversionen är oförändrad |
 | Offline-karta utan service worker | `src/tile-cache.ts` | Kartrutor sparas i IndexedDB och läses via MapLibres `transformRequest` |
-| Publik integritetspolicy | `public/privacy.html` | `https://nrnworld.one/ParkeraiSthlm/privacy.html` |
-| Publik supportsida med kontakt | `public/support.html` | `https://nrnworld.one/ParkeraiSthlm/support.html` |
+| Publik integritetspolicy | `public/privacy.html` | `https://nrnworld.one/ParkiSthlm/privacy.html` |
+| Publik supportsida med kontakt | `public/support.html` | `https://nrnworld.one/ParkiSthlm/support.html` |
 | Molnbygge | `codemagic.yaml` | Bygger och skickar till TestFlight utan Mac |
 | Byggskript | `package.json` | `assets:native`, `build:native`, `ios:sync` |
 
@@ -43,7 +43,7 @@ npx cap sync ios       # kopierar bygget in i ios/App/App/public och uppdaterar 
 
 ### Skillnader mellan webbappen och den inbyggda appen
 
-- Sökvägar: webbappen ligger under `/ParkeraiSthlm/`, appen i paketets rot.
+- Sökvägar: webbappen ligger under `/ParkiSthlm/`, appen i paketets rot.
 - Service workern laddas inte i appen (den körs på `capacitor://`, där service workers inte
   finns). Appens filer ligger i paketet, och offline-kartan sparas i stället i telefonens
   IndexedDB och läses tillbaka via MapLibres `transformRequest` – se `src/tile-cache.ts`.
@@ -66,13 +66,13 @@ Det tar oftast några dagar innan ett privat medlemskap är godkänt.
 ### 2. Skapa appen i App Store Connect
 
 1. Gå till <https://appstoreconnect.apple.com> → **My Apps** → **+** → **New App**.
-2. Plattform **iOS**, namn **ParkeraiSthlm**, språk **Svenska**, SKU (valfritt internt id,
-   t.ex. `parkeraisthlm-1`), användaråtkomst **Full Access**.
-3. Bundle-ID: välj `one.nrnworld.parkeraisthlm` i listan. Dyker det inte upp förrän Xcode har
+2. Plattform **iOS**, namn **ParkiSthlm**, språk **Svenska**, SKU (valfritt internt id,
+   t.ex. `parkisthlm-1`), användaråtkomst **Full Access**.
+3. Bundle-ID: välj `one.nrnworld.parkisthlm` i listan. Dyker det inte upp förrän Xcode har
    registrerat det – se nästa punkt.
 
 Namnet kontrolleras mot App Store: ett namn kan bara användas av en app per språk. Är
-`ParkeraiSthlm` upptaget får du välja ett annat namn (bundle-ID:t påverkas inte).
+`ParkiSthlm` upptaget får du välja ett annat namn (bundle-ID:t påverkas inte).
 
 ### 3. Skapa en App Store Connect-nyckel för molnbygget
 
@@ -101,11 +101,11 @@ M2-processor – gott och väl för en eller ett par releaser i månaden. Över 
 
 1. Skapa ett konto på <https://codemagic.io> och koppla GitHub-repot.
 2. **Team integrations → Developer Portal:** ladda upp App Store Connect-nyckeln från steg 3
-   och döp den till `ParkeraiSthlmAppStore` (samma namn som i `codemagic.yaml`).
+   och döp den till `ParkiSthlmAppStore` (samma namn som i `codemagic.yaml`).
 3. **Code signing identities:** ladda upp eller låt Codemagic hämta ett
    Apple Distribution-certifikat och en App Store-provisioneringsprofil för
-   `one.nrnworld.parkeraisthlm`.
-4. Välj arbetsflödet **ParkeraiSthlm – App Store** och starta det. Det triggas också
+   `one.nrnworld.parkisthlm`.
+4. Välj arbetsflödet **ParkiSthlm – App Store** och starta det. Det triggas också
    automatiskt av en git-tagg som börjar på `ios-`, till exempel:
 
    ```bash
@@ -133,7 +133,7 @@ xcodebuild -exportArchive -archivePath "$PWD/build/App.xcarchive" \
   -exportPath "$PWD/build/export" -exportOptionsPlist ios/ExportOptions.plist
 
 xcrun altool --upload-package "$IPA" --type ios \
-  --apple-id "$APPLE_ID" --bundle-id one.nrnworld.parkeraisthlm \
+  --apple-id "$APPLE_ID" --bundle-id one.nrnworld.parkisthlm \
   --bundle-version "$BUILD" --bundle-short-version-string "$VERSION" \
   --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
 ```
@@ -182,10 +182,10 @@ appen gör är lagom; se förslagen i [appstore-text.md](appstore-text.md).
 ## Checklista innan du skickar in
 
 - [ ] Apple Developer-medlemskapet är godkänt och Team ID antecknat
-- [ ] Appen skapad i App Store Connect med bundle-ID `one.nrnworld.parkeraisthlm`
+- [ ] Appen skapad i App Store Connect med bundle-ID `one.nrnworld.parkisthlm`
 - [ ] Text, nyckelord, kategorier och URL:er ifyllda enligt `docs/appstore-text.md`
-- [ ] Integritetspolicyns URL fungerar och sidan är läsbar: <https://nrnworld.one/ParkeraiSthlm/privacy.html>
-- [ ] Support-URL:en fungerar och innehåller kontaktuppgifter: <https://nrnworld.one/ParkeraiSthlm/support.html>
+- [ ] Integritetspolicyns URL fungerar och sidan är läsbar: <https://nrnworld.one/ParkiSthlm/privacy.html>
+- [ ] Support-URL:en fungerar och innehåller kontaktuppgifter: <https://nrnworld.one/ParkiSthlm/support.html>
 - [ ] Integritetssvaren i App Privacy ifyllda (se `docs/appstore-text.md`)
 - [ ] Skärmbilder för iPhone och iPad uppladdade
 - [ ] Åldersgränsen satt via frågeformuläret
@@ -196,7 +196,7 @@ appen gör är lagom; se förslagen i [appstore-text.md](appstore-text.md).
 ## Det som avgör om appen blir godkänd
 
 Den största risken är Apples regel 4.2 (minsta funktionalitet): en app som bara är en
-webbsida i ett skal avvisas. ParkeraiSthlm har saker som talar för sig – offline-karta,
+webbsida i ett skal avvisas. ParkiSthlm har saker som talar för sig – offline-karta,
 platsbehörighet som bara används på begäran, lokala påminnelser, sparad bil med
 avgiftspåminnelser och överlämning till telefonens egna kartappar – och det är just de
 delarna granskaren ska se. Skriv därför i granskningsnoterna vad appen gör och hur man

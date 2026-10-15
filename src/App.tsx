@@ -3816,8 +3816,8 @@ function App() {
             {panelOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
           <button className="brand" type="button" onClick={() => mapRef.current?.flyTo({ center: toLngLat(STOCKHOLM_CENTER), zoom: 13, duration: 1000 })}>
-            <span className="brand-mark"><ParkingCircle size={24} strokeWidth={2.4} /></span>
-            <span><strong>ParkeraiSthlm</strong><small>Taxa, plats, klart.</small></span>
+            <span className="brand-mark"><img src={`${import.meta.env.BASE_URL}icon-96.png`} alt="" width={40} height={40} /></span>
+            <span><strong>ParkiSthlm</strong><small>Taxa, plats, klart.</small></span>
           </button>
           <button className={`connection ${online ? "online" : "offline"}`} type="button" onClick={() => !online && showNotice("Offline: lokala taxor, GPS och sparade parkeringar fungerar") }>
             {online ? <Wifi size={14} /> : <WifiOff size={14} />}
@@ -4700,7 +4700,7 @@ function App() {
               <div className="source-links">
                 <a href="https://parkering.stockholm/betala-parkering/taxeomraden-avgifter/" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://parkering.stockholm/betala-parkering/taxeomraden-avgifter/"); }}>Stockholms stads taxor <ExternalLink size={14} /></a>
                 <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://www.openstreetmap.org/copyright"); }}>OpenStreetMap <ExternalLink size={14} /></a>
-                <a href="https://nrnworld.one/ParkeraiSthlm/privacy.html" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://nrnworld.one/ParkeraiSthlm/privacy.html"); }}>Integritetspolicy <ExternalLink size={14} /></a>
+                <a href="https://nrnworld.one/ParkiSthlm/privacy.html" target="_blank" rel="noreferrer" onClick={(event) => { event.preventDefault(); openExternalUrl("https://nrnworld.one/ParkiSthlm/privacy.html"); }}>Integritetspolicy <ExternalLink size={14} /></a>
               </div>
               <button type="button" className="modal-action" onClick={() => { void saveOffline(); setInfoOpen(false); }}><Download size={17} /> {offlineReady ? "Offline-data är sparad" : offlineProgress ? "Laddar ner..." : "Gör appen redo offline"}</button>
             </motion.section>

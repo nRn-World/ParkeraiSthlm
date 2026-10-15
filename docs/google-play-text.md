@@ -7,21 +7,21 @@ du skriver om.
 
 | Fält | Värde |
 | --- | --- |
-| Paketnamn | `one.nrnworld.parkeraisthlm` |
-| Appnamn (30) | `ParkeraiSthlm` |
+| Paketnamn | `one.nrnworld.parkisthlm` |
+| Appnamn (30) | `ParkiSthlm` |
 | Kort beskrivning (80) | `Parkering, taxor och avgifter i Stockholm – även offline.` |
 | Kategori | Kartor och navigering |
 | Taggar | Parkering, Karta, Stockholm |
 | Kontakt-e-post | bynnrworld@gmail.com |
-| Integritetspolicy | `https://nrnworld.one/ParkeraiSthlm/privacy.html` |
-| Supportwebbplats | `https://nrnworld.one/ParkeraiSthlm/support.html` |
+| Integritetspolicy | `https://nrnworld.one/ParkiSthlm/privacy.html` |
+| Supportwebbplats | `https://nrnworld.one/ParkiSthlm/support.html` |
 | Typ av app | App (inte spel), gratis, inga köp i appen |
 | Innehållsdeklaration | Lägsta nivån (inga känsliga kategorier) |
 
 ## Fullständig beskrivning (4000)
 
 ```
-ParkeraiSthlm visar var du får parkera i Stockholm, vad det kostar just nu och hur länge.
+ParkiSthlm visar var du får parkera i Stockholm, vad det kostar just nu och hur länge.
 
 Kartan täcker Stockholms fem ordinarie taxeområden med gatuparkering, garage, markparkering, laddplatser och platser som är markerade som gratis. Priset räknas ut för den tid du faktiskt står där, med dagens taxa, avgiftsperioder och gratistimmar.
 
@@ -51,7 +51,7 @@ BRA ATT VETA
 · Uppgifterna kommer från Stockholms stad, OpenStreetMap, Open Charge Map, Stockholm Parkering och Nobil
 · Vägmärken, skyltning och betalningsapp på plats gäller alltid före kartan
 
-ParkeraiSthlm är byggd för att vara snabb att öppna när du står vid bilen: ingen registrering, ingen reklam och inga köp inuti appen.
+ParkiSthlm är byggd för att vara snabb att öppna när du står vid bilen: ingen registrering, ingen reklam och inga köp inuti appen.
 ```
 
 ## Vad är nytt (release notes, valfritt)
@@ -99,18 +99,21 @@ och är inte gjord för barn, så du slipper Families Policy.
 | --- | --- | --- |
 | Butiksikon | 512×512 px, 32-bitars PNG med alfakanal, max 1 024 kB | [play-icon-512.png](../public/play-icon-512.png) (11 kB) |
 | Grafisk bild | 1 024×500 px, JPEG eller 24-bitars PNG utan alfakanal | [play-feature-1024x500.png](../public/play-feature-1024x500.png) |
-| Telefonbilder | Minst 2, fyra rekommenderas i 1080×1920 (JPEG eller PNG utan alfakanal) | Ta dem själv, se nedan |
-| Surfplattebilder | Fyra bilder, 1 080–7 680 px, 16:9 liggande eller 9:16 stående | Ta dem själv, se nedan |
+| Telefonbilder | Minst 2, fyra rekommenderas i 1080×1920 (JPEG eller PNG utan alfakanal) | Fem färdiga i [`store/`](../store): karta med lista, helskärmskarta, platskort, elbilsladdning, offline |
+| Surfplattebilder | Fyra bilder, 1 080–7 680 px, 16:9 liggande eller 9:16 stående | Behövs bara för surfplattor i butiken – tas med fördel i en surfplatte-emulator |
 
 Den grafiska bilden är en enkel variant med appens ikon på mörk botten. Den går att byta ut
 mot en egen bild med rubrik om du vill – kravet är bara måttet och att alfakanalen saknas.
 
-Så tar du skärmbilderna:
+Skärmbilderna i `store/` är tagna från den körande appen på en Pixel 8 Pro-emulator och är
+1 344 × 2 688 px (exakt 2:1), utan alfakanal och mellan 0,57 och 4,05 MB. Google tillåter
+320–3 840 px per sida, högst 2:1 och högst 8 MB per bild. Vill du ta nya:
 
 - **På en telefon:** koppla in den med USB, kör `cd android && ./gradlew installDebug`, öppna
   appen och ta skärmbilder som vanligt. Kopiera dem med `adb pull /sdcard/Pictures/Screenshots`.
-- **I Android Studio:** *Device Manager → Create Device*, välj en telefon (t.ex. Pixel 8) och
-  sedan en surfplatta, starta och ta skärmbilder med kameraknappen i emulatorn.
+- **I emulatorn:** `adb exec-out screencap -p > bild.png`. Ta skärmdumpen med adb och inte via
+  fjärrfelsökningen i Chrome – WebGL-kartan blir tom i den senare. Beskär därefter till högst
+  2:1, t.ex. 1 344 × 2 688, och se till att alfakanalen tas bort.
 - Tänkbara motiv: karta med taxeområden och platskort, körläge med rutt, P-skiva med
   nedräkning, sparad bil, offline-nedladdning.
 
@@ -118,7 +121,7 @@ Så tar du skärmbilderna:
 
 - [ ] Appnamn, kort och fullständig beskrivning ifyllda
 - [ ] Butiksikon och grafisk bild uppladdade
-- [ ] Minst två telefonbilder, fyra surfplattebilder
+- [x] Fem telefonbilder färdiga i `store/` (surfplattebilder kvar om appen ska visas på surfplattor)
 - [ ] Integritetspolicy och support-URL ifyllda
 - [ ] Datasäkerhetsformuläret ifyllt enligt tabellen ovan
 - [ ] Innehållsdeklaration och målgrupp ifyllda
