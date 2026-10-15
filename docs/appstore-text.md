@@ -119,7 +119,7 @@ Data kommer från Stockholms stads öppna data, OpenStreetMap, Open Charge Map, 
 Platsbehörigheten används enbart när användaren själv trycker på plats- eller ruttknappen. Om behörigheten nekats fungerar kartan ändå, med rutten från kartans mitt.
 ```
 
-Kontaktuppgifter i granskningsformuläret: `bynnrworld@gmail.com`. Ange en telefon som kan nås
+Kontaktuppgifter i granskningsformuläret: `bynrnworld@gmail.com`. Ange en telefon som kan nås
 under granskningen om du har en.
 
 ## Skärmbilder

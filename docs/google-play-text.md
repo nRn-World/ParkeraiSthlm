@@ -12,7 +12,7 @@ du skriver om.
 | Kort beskrivning (80) | `Parkering, taxor och avgifter i Stockholm – även offline.` |
 | Kategori | Kartor och navigering |
 | Taggar | Parkering, Karta, Stockholm |
-| Kontakt-e-post | bynnrworld@gmail.com |
+| Kontakt-e-post | bynrnworld@gmail.com |
 | Integritetspolicy | `https://nrnworld.one/ParkiSthlm/privacy.html` |
 | Supportwebbplats | `https://nrnworld.one/ParkiSthlm/support.html` |
 | Typ av app | App (inte spel), gratis, inga köp i appen |
