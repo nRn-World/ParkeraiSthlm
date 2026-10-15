@@ -68,7 +68,7 @@ export const TARIFFS = {
   2: {
     color: "#ce4588",
     price: "31 kr/tim",
-    shortHours: "Vard 07–21 / Fredag+Lör+Helgdag 09–19",
+    shortHours: "Vardagar 07–21 / Dag före helg + helg 09–19",
     hours: "Vardagar (utom dag före sön/helgdag): 31 kr/tim 07–21, övrig tid 20 kr/tim. Vardag före sön/helgdag och sön/helgdag: 31 kr/tim 09–19, övrig tid 20 kr/tim. Avgift dygnet runt.",
     area: "Öster om Scheelegatan (Kungsholmen), söder om Tegnérgatan/Karlavägen, väster om Karlaplan/Narvavägen/Strandvägen, samt Blasieholmen, Gamla stan och Norr Mälarstrand till Kungsholms torg.",
   },
